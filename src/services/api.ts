@@ -1,8 +1,8 @@
-// Se VITE_API_URL não estiver definida no .env, usamos a string vazia '' por padrão.
-// Isso faz com que as requisições usem a mesma origem relativa do frontend,
-// ativando perfeitamente o multi-proxy do Vite (/auth, /product, /api) em desenvolvimento
-// e resolvendo de vez o erro 403 de CORS sem alterações de código no Java.
-const BASE_URL = import.meta.env.VITE_API_URL || '';
+// Se estivermos em modo de desenvolvimento (DEV), usamos a string vazia '' por padrão.
+// Isso força as requisições a passarem pelo proxy do Vite (/api, /auth, /product) configurado
+// em vite.config.ts, contornando erros de CORS no navegador local de forma limpa.
+// Em produção, usamos a URL configurada na variável de ambiente VITE_API_URL.
+const BASE_URL = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_URL || '');
 
 interface RequestOptions extends RequestInit {
   params?: Record<string, string>;
