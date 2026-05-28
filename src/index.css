@@ -1,0 +1,57 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-neo-bg text-neo-dark font-body antialiased;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading font-bold text-neo-dark uppercase tracking-tight;
+  }
+}
+
+@layer utilities {
+  /* Cards Neo-Brutalistas */
+  .neo-card {
+    @apply bg-neo-paper border-3 border-neo-dark shadow-neo-md rounded-none transition-all duration-200;
+  }
+  
+  .neo-card-hover {
+    @apply hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-neo-lg;
+  }
+  
+  /* Botões Neo-Brutalistas */
+  .neo-btn {
+    @apply px-4 py-2 font-heading font-bold uppercase tracking-wider text-sm border-3 border-neo-dark rounded-none shadow-neo-sm active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all cursor-pointer select-none inline-flex items-center justify-center gap-2;
+  }
+  
+  .neo-btn-primary {
+    @apply neo-btn bg-neo-brand text-neo-paper hover:bg-emerald-700;
+  }
+  
+  .neo-btn-accent {
+    @apply neo-btn bg-neo-accent text-neo-paper hover:bg-blue-700;
+  }
+  
+  .neo-btn-yellow {
+    @apply neo-btn bg-neo-yellow text-neo-dark hover:bg-amber-500;
+  }
+  
+  /* Inputs Neo-Brutalistas */
+  .neo-input {
+    @apply w-full px-3 py-2 border-3 border-neo-dark rounded-none font-body placeholder-gray-500 bg-white focus:outline-none focus:bg-white focus:shadow-neo-sm transition-all;
+  }
+
+  .neo-input-icon {
+    @apply pl-12 pr-4 !important;
+  }
+
+  /* Badges */
+  .neo-badge {
+    @apply px-2 py-0.5 border-2 border-neo-dark text-xs font-bold font-heading uppercase inline-block;
+  }
+}
