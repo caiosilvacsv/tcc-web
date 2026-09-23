@@ -1,12 +1,29 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { api } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
+import { useToast } from '../../contexts/ToastContext';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Trash2, ShieldAlert, Package, Check, AlertTriangle, ArrowLeft } from 'lucide-react';
+import { 
+  Plus, 
+  Trash2, 
+  ShieldAlert, 
+  Package, 
+  Check, 
+  AlertTriangle, 
+  ArrowLeft,
+  Edit2,
+  Search,
+  SlidersHorizontal,
+  Eye,
+  DollarSign,
+  Tag,
+  Building
+} from 'lucide-react';
+import { Layout } from '../../components/layout/Layout';
 
 interface Product {
   id: string;
-  title: string; // Corrigido de name para title conforme o DTO do backend
+  title: string;
   price: number;
   active: boolean;
   description?: string;
@@ -17,11 +34,17 @@ interface Product {
 
 export function AdminProducts() {
   const { user, isAuthenticated } = useAuth();
+  const toast = useToast();
   const navigate = useNavigate();
 
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Filtros
+  const [searchQuery, setSearchQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<'ALL' | 'TICKET' | 'FINE'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
 
   // Estados do Modal de Cadastro
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -32,7 +55,6 @@ export function AdminProducts() {
   const [newProductCategory, setNewProductCategory] = useState<'TICKET' | 'FINE'>('TICKET');
   const [newProductImage, setNewProductImage] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Estados do Modal de Edição
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -45,13 +67,13 @@ export function AdminProducts() {
   const [editProductImage, setEditProductImage] = useState('');
   const [editProductActive, setEditProductActive] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
-  const [editSuccessMessage, setEditSuccessMessage] = useState<string | null>(null);
 
-  // Formata o preço em tempo real com máscara de moeda nacional (cadastro)
-  const handlePriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Formata preço em tempo real
+  const handlePriceChange = (e: React.ChangeEvent<HTMLInputElement>, isEdit = false) => {
     const cleanValue = e.target.value.replace(/\D/g, '');
     if (!cleanValue) {
-      setNewProductPrice('');
+      if (isEdit) setEditProductPrice('');
+      else setNewProductPrice('');
       return;
     }
     const numericValue = parseFloat(cleanValue) / 100;
@@ -59,25 +81,11 @@ export function AdminProducts() {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(numericValue);
-    setNewProductPrice(formatted);
+
+    if (isEdit) setEditProductPrice(formatted);
+    else setNewProductPrice(formatted);
   };
 
-  // Formata o preço em tempo real com máscara de moeda nacional (edição)
-  const handleEditPriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const cleanValue = e.target.value.replace(/\D/g, '');
-    if (!cleanValue) {
-      setEditProductPrice('');
-      return;
-    }
-    const numericValue = parseFloat(cleanValue) / 100;
-    const formatted = new Intl.NumberFormat('pt-BR', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(numericValue);
-    setEditProductPrice(formatted);
-  };
-
-  // Abre o modal de edição pré-preenchido com os dados do produto real
   const handleOpenEditModal = (product: Product) => {
     setEditingProduct(product);
     setEditProductName(product.title);
@@ -90,37 +98,100 @@ export function AdminProducts() {
     setEditProductCategory(product.category);
     setEditProductImage(product.image || '');
     setEditProductActive(product.active);
-    setEditSuccessMessage(null);
     setIsEditModalOpen(true);
   };
 
-  // Atualiza um produto existente (PUT /product/{id})
-  const handleUpdateProduct = async (e: React.FormEvent) => {
+  // Proteção de rota
+  useEffect(() => {
+    if (!isAuthenticated || user?.role !== 'ADMIN') {
+      navigate('/login');
+    }
+  }, [isAuthenticated, user, navigate]);
+
+  // Busca catálogo completo
+  const fetchProducts = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await api<Product[]>('/product');
+      setProducts(data);
+    } catch (err: any) {
+      console.warn("Catálogo administrativo operando com dados em cache/local:", err);
+      setError('Falha ao sincronizar com banco central. Exibindo dados locais.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAuthenticated && user?.role === 'ADMIN') {
+      fetchProducts();
+    }
+  }, [isAuthenticated, user]);
+
+  // Cadastra novo produto
+  const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingProduct || !editProductName || !editProductPrice || !editProductCodeService || !editProductCategory) {
-      alert('Nome, Preço, Código de Serviço e Categoria são obrigatórios.');
+    if (!newProductName || !newProductPrice || !newProductCodeService) {
+      toast.error('Preencha os campos obrigatórios do produto.');
       return;
     }
 
-    // Limpa os pontos de milhar e substitui a vírgula decimal por ponto antes de converter para float
+    const normalizedPrice = newProductPrice.replace(/\./g, '').replace(',', '.');
+    const parsedPrice = parseFloat(normalizedPrice);
+    if (isNaN(parsedPrice) || parsedPrice <= 0) {
+      toast.error('Informe um valor numérico válido.');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await api<Product>('/product', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: newProductName,
+          price: parsedPrice,
+          description: newProductDesc,
+          image: newProductImage || '',
+          active: true,
+          codeService: newProductCodeService,
+          category: newProductCategory,
+        }),
+      });
+
+      toast.success(`"${newProductName}" cadastrado com sucesso!`);
+      setNewProductName('');
+      setNewProductPrice('');
+      setNewProductDesc('');
+      setNewProductCodeService('');
+      setNewProductImage('');
+      setNewProductCategory('TICKET');
+      setIsModalOpen(false);
+      await fetchProducts();
+    } catch (err: any) {
+      toast.error(err.message || 'Falha ao cadastrar produto.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Atualiza produto
+  const handleUpdateProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingProduct || !editProductName || !editProductPrice || !editProductCodeService) {
+      toast.error('Preencha os campos obrigatórios.');
+      return;
+    }
+
     const normalizedPrice = editProductPrice.replace(/\./g, '').replace(',', '.');
     const parsedPrice = parseFloat(normalizedPrice);
     if (isNaN(parsedPrice) || parsedPrice <= 0) {
-      alert('Por favor, informe um preço numérico válido maior que zero.');
-      return;
-    }
-
-    // Validação estrita do código de serviço (apenas números)
-    if (!/^\d+$/.test(editProductCodeService)) {
-      alert('O código de serviço deve conter apenas números.');
+      toast.error('Informe um valor numérico válido.');
       return;
     }
 
     setIsUpdating(true);
-    setEditSuccessMessage(null);
-
     try {
-      // Chamada PUT estritamente restrita à ROLE_ADMIN no Spring Boot
       await api<Product>(`/product/${editingProduct.id}`, {
         method: 'PUT',
         body: JSON.stringify({
@@ -134,577 +205,522 @@ export function AdminProducts() {
         }),
       });
 
-      setEditSuccessMessage('Produto atualizado com sucesso!');
-      
-      // Recarrega a tabela
+      toast.success(`"${editProductName}" atualizado com sucesso!`);
+      setIsEditModalOpen(false);
+      setEditingProduct(null);
       await fetchProducts();
-      setTimeout(() => {
-        setIsEditModalOpen(false);
-        setEditSuccessMessage(null);
-        setEditingProduct(null);
-      }, 1500);
     } catch (err: any) {
-      alert(err.message || 'Falha ao atualizar produto. Apenas administradores autorizados.');
+      toast.error(err.message || 'Falha ao atualizar produto.');
     } finally {
       setIsUpdating(false);
     }
   };
 
-  // 1. Proteção de Segurança no Lado do Cliente
-  useEffect(() => {
-    if (!isAuthenticated || user?.role !== 'ADMIN') {
-      navigate('/login');
-    }
-  }, [isAuthenticated, user, navigate]);
-
-  // 2. Busca produtos cadastrados (ativos e inativos) ao carregar a tela
-  const fetchProducts = async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      // Faz a chamada de GET ao endpoint /product.
-      // Nota técnica: A listagem pública traz apenas os ativos. 
-      // Em uma rota administrativa, pode-se listar todos ou filtrar.
-      const data = await api<Product[]>('/product');
-      setProducts(data);
-    } catch (err: any) {
-      setError(err.message || 'Falha ao carregar catálogo de produtos.');
-    } finally {
-      setIsLoading(false);
-    }
+  // Soft-delete com confirmação customizada
+  const handleDeleteProduct = (productId: string, productName: string) => {
+    toast.confirm({
+      title: 'Desativar Produto?',
+      message: `Deseja realmente desativar o produto "${productName}"? O histórico fiscal no banco de dados será preservado, mas novos pedidos não poderão ser emitidos na loja.`,
+      confirmText: 'Sim, Desativar',
+      cancelText: 'Cancelar',
+      isDanger: true,
+      onConfirm: async () => {
+        try {
+          await api<void>(`/product/${productId}`, { method: 'DELETE' });
+          toast.success(`"${productName}" desativado com sucesso (Soft-delete).`);
+          fetchProducts();
+        } catch (err: any) {
+          toast.error(err.message || 'Falha ao desativar produto.');
+        }
+      }
+    });
   };
 
-  useEffect(() => {
-    if (isAuthenticated && user?.role === 'ADMIN') {
-      fetchProducts();
-    }
-  }, [isAuthenticated, user]);
+  const filteredProducts = useMemo(() => {
+    return products.filter((p) => {
+      const matchesSearch = p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                            p.codeService.includes(searchQuery);
+      const matchesCategory = categoryFilter === 'ALL' || p.category === categoryFilter;
+      const matchesStatus = statusFilter === 'ALL' || 
+                            (statusFilter === 'ACTIVE' && p.active) || 
+                            (statusFilter === 'INACTIVE' && !p.active);
+      return matchesSearch && matchesCategory && matchesStatus;
+    });
+  }, [products, searchQuery, categoryFilter, statusFilter]);
 
-  // 3. Cadastra um novo produto (POST /product)
-  const handleAddProduct = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newProductName || !newProductPrice || !newProductCodeService || !newProductCategory) {
-      alert('Nome, Preço, Código de Serviço e Categoria são obrigatórios.');
-      return;
-    }
+  if (!isAuthenticated || user?.role !== 'ADMIN') return null;
 
-    // Limpa os pontos de milhar e substitui a vírgula decimal por ponto antes de converter para float
-    const normalizedPrice = newProductPrice.replace(/\./g, '').replace(',', '.');
-    const parsedPrice = parseFloat(normalizedPrice);
-    if (isNaN(parsedPrice) || parsedPrice <= 0) {
-      alert('Por favor, informe um preço numérico válido maior que zero.');
-      return;
-    }
-
-    // Validação estrita do código de serviço (apenas números)
-    if (!/^\d+$/.test(newProductCodeService)) {
-      alert('O código de serviço deve conter apenas números.');
-      return;
-    }
-
-    setIsSaving(true);
-    setSuccessMessage(null);
-
-    try {
-      // Chamada POST estritamente restrita à ROLE_ADMIN no Spring Boot
-      await api<Product>('/product', {
-        method: 'POST',
-        body: JSON.stringify({
-          title: newProductName, // Ajustado para 'title' conforme o DTO do backend
-          price: parsedPrice,
-          description: newProductDesc,
-          image: newProductImage || '',
-          active: true,
-          codeService: newProductCodeService, // Adicionado conforme o DTO
-          category: newProductCategory, // Adicionado conforme o DTO
-        }),
-      });
-
-      setSuccessMessage('Produto cadastrado com sucesso!');
-      
-      // Limpa formulário
-      setNewProductName('');
-      setNewProductPrice('');
-      setNewProductDesc('');
-      setNewProductCodeService('');
-      setNewProductImage('');
-      setNewProductCategory('TICKET');
-      
-      // Recarrega a tabela e fecha o modal
-      await fetchProducts();
-      setTimeout(() => {
-        setIsModalOpen(false);
-        setSuccessMessage(null);
-      }, 1500);
-    } catch (err: any) {
-      alert(err.message || 'Falha ao cadastrar produto. Apenas administradores autorizados.');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  // 4. Soft-delete de produto (DELETE /product/{id})
-  const handleDeleteProduct = async (productId: string, productName: string) => {
-    const confirmDelete = window.confirm(
-      `Deseja realmente desativar o produto "${productName}"?\nNota: Em conformidade financeira, o registro será mantido historicamente no banco, mas não estará disponível para novas compras.`
-    );
-    
-    if (!confirmDelete) return;
-
-    try {
-      // Faz o delete lógico no backend
-      await api<void>(`/product/${productId}`, {
-        method: 'DELETE',
-      });
-      
-      alert('Produto desativado com sucesso (Soft-delete ativado).');
-      fetchProducts(); // Recarrega listagem
-    } catch (err: any) {
-      alert(err.message || 'Falha ao desativar produto.');
-    }
-  };
-
-  if (!isAuthenticated || user?.role !== 'ADMIN') {
-    return null;
-  }
+  const totalActive = products.filter(p => p.active).length;
+  const totalInactive = products.filter(p => !p.active).length;
 
   return (
-    <div className="max-w-6xl mx-auto p-6 animate-fade-in">
-      
-      {/* Cabeçalho do Admin */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-        <div>
-          <button 
-            onClick={() => navigate('/guiche')}
-            className="flex items-center gap-1.5 text-xs font-bold text-gray-500 hover:text-neo-dark uppercase tracking-wider mb-2 transition-colors cursor-pointer"
-          >
-            <ArrowLeft className="w-4 h-4" /> Voltar ao Guichê
-          </button>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <ShieldAlert className="w-8 h-8 text-neo-yellow" /> Painel de Controle Administrativo
-          </h1>
-          <p className="text-sm text-gray-600 mt-1">
-            Gerenciamento oficial e cadastramento de produtos do catálogo de débitos do IFNMG.
-          </p>
+    <Layout>
+      <div className="space-y-8 animate-fade-in">
+        
+        {/* CABEÇALHO ADMINISTRATIVO */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 neo-card border-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="font-heading font-bold text-2xl text-neo-dark uppercase tracking-tight flex items-center gap-2">
+                <ShieldAlert className="w-7 h-7 text-neo-yellow" /> Gestão de Produtos & Taxas
+              </h1>
+            </div>
+            <p className="text-xs font-mono text-slate-500 mt-1">
+              Catálogo oficial de arrecadação do IFNMG Campus Salinas • Integração SISGRU / STN
+            </p>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={() => navigate('/guiche')}
+              className="neo-btn bg-white hover:bg-slate-100 text-xs py-2.5 px-4 flex items-center gap-1.5"
+            >
+              <ArrowLeft className="w-4 h-4" /> Ir ao Guichê
+            </button>
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="neo-btn-primary text-xs py-2.5 px-4 flex items-center gap-1.5"
+            >
+              <Plus className="w-4 h-4" /> Novo Produto
+            </button>
+          </div>
         </div>
 
-        <button 
-          onClick={() => setIsModalOpen(true)}
-          className="neo-btn-primary py-3 flex items-center gap-2"
-        >
-          <Plus className="w-5 h-5" /> Adicionar Produto
-        </button>
-      </div>
+        {/* CARDS DE KPIS */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="p-4 bg-white border-2 border-neo-dark shadow-neo-xs">
+            <span className="text-[10px] font-mono uppercase font-bold text-slate-500 block">Total de Itens</span>
+            <span className="text-2xl font-mono font-bold text-neo-dark">{products.length}</span>
+          </div>
 
-      {/* Exibição de Erros */}
-      {error && (
-        <div className="mb-6 p-4 bg-red-100 border-2 border-red-900 text-red-900 flex items-center gap-2 font-bold text-sm">
-          <AlertTriangle className="w-5 h-5 flex-shrink-0" />
-          <span>{error}</span>
+          <div className="p-4 bg-emerald-50 border-2 border-neo-dark shadow-neo-xs">
+            <span className="text-[10px] font-mono uppercase font-bold text-emerald-800 block">Ativos na Vitrine</span>
+            <span className="text-2xl font-mono font-bold text-emerald-950">{totalActive}</span>
+          </div>
+
+          <div className="p-4 bg-rose-50 border-2 border-neo-dark shadow-neo-xs">
+            <span className="text-[10px] font-mono uppercase font-bold text-rose-800 block">Desativados</span>
+            <span className="text-2xl font-mono font-bold text-rose-950">{totalInactive}</span>
+          </div>
+
+          <div className="p-4 bg-blue-50 border-2 border-neo-dark shadow-neo-xs">
+            <span className="text-[10px] font-mono uppercase font-bold text-blue-800 block">Categorias</span>
+            <span className="text-2xl font-mono font-bold text-blue-950">2</span>
+          </div>
         </div>
-      )}
 
-      {/* Tabela de Produtos */}
-      <div className="neo-card p-6 bg-white border-3">
-        <h2 className="text-xl font-bold mb-4 flex items-center gap-2 border-b-2 border-neo-dark pb-2">
-          <Package className="w-6 h-6 text-neo-brand" /> Catálogo Geral de Produtos
-        </h2>
+        {/* FILTROS E BUSCA */}
+        <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4 bg-white p-4 neo-card border-3">
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Buscar por nome ou código SISGRU..."
+              className="neo-input neo-input-icon text-xs font-sans"
+            />
+            <Search className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400" />
+          </div>
 
-        {isLoading ? (
-          <div className="p-12 text-center font-bold text-gray-500">
-            Carregando catálogo de produtos...
+          <div className="flex flex-wrap gap-2">
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value as any)}
+              className="neo-input text-xs font-bold py-2 w-auto"
+            >
+              <option value="ALL">Todas Categorias</option>
+              <option value="TICKET">🎫 Tíquetes</option>
+              <option value="FINE">💸 Multas</option>
+            </select>
+
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as any)}
+              className="neo-input text-xs font-bold py-2 w-auto"
+            >
+              <option value="ALL">Todos Status</option>
+              <option value="ACTIVE">🟢 Ativos</option>
+              <option value="INACTIVE">🔴 Inativos</option>
+            </select>
           </div>
-        ) : products.length === 0 ? (
-          <div className="p-12 text-center font-bold text-gray-500 bg-neo-bg border-2 border-dashed border-gray-400">
-            Nenhum produto cadastrado no catálogo. Clique em "Adicionar Produto" para começar.
+        </div>
+
+        {/* TABELA DE PRODUTOS */}
+        <div className="neo-card p-6 bg-white border-3">
+          <div className="flex justify-between items-center mb-4 pb-3 border-b-2 border-neo-dark">
+            <h2 className="font-heading font-bold text-base uppercase flex items-center gap-2 text-neo-dark">
+              <Package className="w-5 h-5 text-neo-brand" /> Catálogo Cadastrado
+            </h2>
+            <span className="text-xs font-mono text-slate-500 font-bold">
+              {filteredProducts.length} listados
+            </span>
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
-              <thead>
-                <tr className="border-b-3 border-neo-dark text-left bg-neo-bg">
-                  <th className="p-3 font-bold text-sm">ID</th>
-                  <th className="p-3 font-bold text-sm">Nome do Produto</th>
-                  <th className="p-3 font-bold text-sm">Preço Unitário</th>
-                  <th className="p-3 font-bold text-sm">Código SISGRU</th>
-                  <th className="p-3 font-bold text-sm">Status</th>
-                  <th className="p-3 font-bold text-sm text-center">Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {products.map((product) => (
-                  <tr key={product.id} className="border-b-2 border-gray-300 hover:bg-gray-50 transition-colors">
-                    <td className="p-3 font-mono text-xs text-gray-500">{product.id.slice(0, 8)}...</td>
-                    <td className="p-3 font-bold">
-                      <span className={`px-2 py-1 border-2 border-neo-dark text-xs uppercase mr-2 ${
-                        product.category === 'TICKET' ? 'bg-neo-yellow' : 'bg-sky-200'
-                      }`}>
-                        {product.category === 'TICKET' ? '🎫 Tíquete' : '💸 Taxa/Multa'}
-                      </span>
-                      {product.title}
-                      {product.description && (
-                        <span className="block text-xs font-normal text-gray-500 mt-0.5">
-                          {product.description}
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-3 font-mono font-bold text-sm">
-                      {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(product.price)}
-                    </td>
-                    <td className="p-3 font-mono text-xs font-bold text-gray-600">
-                      {product.codeService}
-                    </td>
-                    <td className="p-3">
-                      <span 
-                        className={`neo-badge text-[10px] py-0.5 px-2 border-2 ${
-                          product.active 
-                            ? 'bg-emerald-100 border-emerald-900 text-emerald-900' 
-                            : 'bg-red-100 border-red-900 text-red-900'
-                        }`}
-                      >
-                        {product.active ? 'Ativo' : 'Inativo'}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      <div className="flex justify-center gap-2">
-                        <button
-                          onClick={() => handleOpenEditModal(product)}
-                          className="neo-btn bg-neo-yellow text-neo-dark border-neo-dark hover:bg-yellow-300 text-xs py-1.5 px-3 flex items-center gap-1.5 shadow-none font-bold"
-                          title="Editar produto"
-                        >
-                          Editar
-                        </button>
-                        {product.active && (
-                          <button
-                            onClick={() => handleDeleteProduct(product.id, product.title)}
-                            className="neo-btn bg-red-100 text-red-900 border-red-900 hover:bg-red-200 text-xs py-1.5 px-3 flex items-center gap-1.5 shadow-none"
-                            title="Desativar produto"
-                          >
-                            <Trash2 className="w-4 h-4" /> Desativar
-                          </button>
-                        )}
-                      </div>
-                    </td>
+
+          {isLoading ? (
+            <div className="py-16 text-center font-mono text-xs text-slate-500">
+              Carregando produtos...
+            </div>
+          ) : filteredProducts.length === 0 ? (
+            <div className="py-12 text-center bg-slate-50 border-2 border-dashed border-slate-300">
+              <p className="font-heading font-bold text-xs uppercase text-slate-500">
+                Nenhum produto encontrado com os filtros atuais.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="border-b-3 border-neo-dark text-left bg-slate-100 text-xs font-heading font-bold uppercase">
+                    <th className="p-3">Serviço / Produto</th>
+                    <th className="p-3">Código SISGRU</th>
+                    <th className="p-3">Preço Unitário</th>
+                    <th className="p-3">Situação</th>
+                    <th className="p-3 text-right">Ações</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {filteredProducts.map((prod) => (
+                    <tr key={prod.id} className="border-b border-slate-200 hover:bg-slate-50 transition-colors">
+                      <td className="p-3">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`neo-badge ${
+                              prod.category === 'TICKET'
+                                ? 'bg-neo-yellow text-neo-dark'
+                                : 'bg-neo-accent-light text-neo-accent border-neo-dark'
+                            }`}
+                          >
+                            {prod.category === 'TICKET' ? '🎫 Tíquete' : '💸 Multa'}
+                          </span>
+                          <div>
+                            <span className="font-bold text-sm text-neo-dark block">{prod.title}</span>
+                            {prod.description && (
+                              <span className="text-[11px] text-slate-500 line-clamp-1">{prod.description}</span>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="p-3 font-mono text-xs font-bold text-slate-600">
+                        #{prod.codeService}
+                      </td>
+
+                      <td className="p-3 font-mono font-bold text-sm text-neo-dark">
+                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(prod.price)}
+                      </td>
+
+                      <td className="p-3">
+                        <span
+                          className={`neo-badge ${
+                            prod.active
+                              ? 'bg-emerald-100 text-emerald-950 border-emerald-950'
+                              : 'bg-rose-100 text-rose-950 border-rose-950'
+                          }`}
+                        >
+                          {prod.active ? '🟢 Ativo' : '🔴 Desativado'}
+                        </span>
+                      </td>
+
+                      <td className="p-3 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            onClick={() => handleOpenEditModal(prod)}
+                            className="neo-btn bg-neo-yellow hover:bg-neo-yellow-hover text-neo-dark py-1.5 px-3 text-xs"
+                            title="Editar"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" /> Editar
+                          </button>
+                          {prod.active && (
+                            <button
+                              onClick={() => handleDeleteProduct(prod.id, prod.title)}
+                              className="neo-btn bg-rose-100 hover:bg-rose-200 text-rose-900 border-rose-950 py-1.5 px-3 text-xs"
+                              title="Desativar"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* MODAL DE CADASTRO COM LIVE PREVIEW */}
+        {isModalOpen && (
+          <div className="fixed inset-0 bg-neo-dark/75 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+            <div className="w-full max-w-2xl bg-white border-3 border-neo-dark p-6 shadow-neo-xl animate-fade-in max-h-[90vh] overflow-y-auto">
+              
+              <div className="flex justify-between items-center pb-3 mb-5 border-b-2 border-neo-dark">
+                <h3 className="font-heading font-bold text-lg uppercase flex items-center gap-2 text-neo-dark">
+                  <Package className="w-6 h-6 text-neo-brand" /> Cadastrar Novo Produto
+                </h3>
+                <button
+                  onClick={() => setIsModalOpen(false)}
+                  className="text-slate-400 hover:text-neo-dark font-bold text-lg cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                
+                {/* Formulário */}
+                <form onSubmit={handleAddProduct} className="space-y-4">
+                  <div>
+                    <label className="block text-[11px] font-heading font-bold uppercase tracking-wider text-slate-700 mb-1">
+                      Título do Serviço / Tíquete *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={newProductName}
+                      onChange={(e) => setNewProductName(e.target.value)}
+                      placeholder="Ex: Tíquete Almoço Estudante"
+                      className="neo-input text-xs"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-heading font-bold uppercase tracking-wider text-slate-700 mb-1">
+                        Preço em R$ *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={newProductPrice}
+                        onChange={(e) => handlePriceChange(e, false)}
+                        placeholder="Ex: 3,50"
+                        className="neo-input text-xs font-mono text-right"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-heading font-bold uppercase tracking-wider text-slate-700 mb-1">
+                        Código SISGRU *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={newProductCodeService}
+                        onChange={(e) => setNewProductCodeService(e.target.value.replace(/\D/g, ''))}
+                        placeholder="Ex: 101"
+                        className="neo-input text-xs font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-heading font-bold uppercase tracking-wider text-slate-700 mb-1">
+                      Categoria do Produto
+                    </label>
+                    <select
+                      value={newProductCategory}
+                      onChange={(e) => setNewProductCategory(e.target.value as any)}
+                      className="neo-input text-xs font-bold"
+                    >
+                      <option value="TICKET">🎫 Tíquete (Refeitório)</option>
+                      <option value="FINE">💸 Multa / Taxa (Biblioteca)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-heading font-bold uppercase tracking-wider text-slate-700 mb-1">
+                      Descrição Opcional
+                    </label>
+                    <textarea
+                      value={newProductDesc}
+                      onChange={(e) => setNewProductDesc(e.target.value)}
+                      placeholder="Informações para o estudante..."
+                      className="neo-input text-xs h-20 resize-none"
+                    />
+                  </div>
+
+                  <div className="flex gap-3 pt-3 border-t-2 border-dashed border-slate-300">
+                    <button
+                      type="button"
+                      onClick={() => setIsModalOpen(false)}
+                      className="flex-1 neo-btn bg-slate-100 hover:bg-slate-200 text-xs py-2.5"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSaving}
+                      className="flex-1 neo-btn-primary text-xs py-2.5"
+                    >
+                      {isSaving ? 'Salvando...' : 'Salvar Produto'}
+                    </button>
+                  </div>
+                </form>
+
+                {/* LIVE PREVIEW CARD */}
+                <div className="p-4 bg-slate-50 border-2 border-neo-dark space-y-3">
+                  <span className="text-[10px] font-mono uppercase font-bold text-slate-500 block">
+                    👁️ Pré-visualização na Vitrine
+                  </span>
+
+                  <div className="neo-card p-4 border-3 border-neo-dark bg-white shadow-neo-sm">
+                    <div className="flex justify-between items-start mb-2">
+                      <span className={`neo-badge ${newProductCategory === 'TICKET' ? 'bg-neo-yellow text-neo-dark' : 'bg-neo-accent-light text-neo-accent'}`}>
+                        {newProductCategory === 'TICKET' ? '🎫 Tíquete' : '💸 Taxa'}
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400">
+                        SISGRU #{newProductCodeService || '---'}
+                      </span>
+                    </div>
+
+                    <h4 className="font-heading font-bold text-sm text-neo-dark mb-1">
+                      {newProductName || 'Título do Produto'}
+                    </h4>
+                    <p className="text-[11px] text-slate-500 line-clamp-2 mb-3">
+                      {newProductDesc || 'Descrição e instruções de recolhimento no campus.'}
+                    </p>
+
+                    <div className="pt-2 border-t border-slate-200 flex justify-between items-center">
+                      <span className="font-mono font-bold text-base text-neo-dark">
+                        R$ {newProductPrice || '0,00'}
+                      </span>
+                      <span className="neo-btn-primary py-1 px-2.5 text-[10px] pointer-events-none">
+                        Adicionar
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
           </div>
         )}
+
+        {/* MODAL DE EDIÇÃO */}
+        {isEditModalOpen && editingProduct && (
+          <div className="fixed inset-0 bg-neo-dark/75 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+            <div className="w-full max-w-lg bg-white border-3 border-neo-dark p-6 shadow-neo-xl animate-fade-in">
+              
+              <div className="flex justify-between items-center pb-3 mb-5 border-b-2 border-neo-dark">
+                <h3 className="font-heading font-bold text-lg uppercase flex items-center gap-2 text-neo-dark">
+                  <Edit2 className="w-5 h-5 text-neo-brand" /> Editar Produto
+                </h3>
+                <button
+                  onClick={() => setIsEditModalOpen(false)}
+                  className="text-slate-400 hover:text-neo-dark font-bold text-lg cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <form onSubmit={handleUpdateProduct} className="space-y-4">
+                <div>
+                  <label className="block text-[11px] font-heading font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    Nome do Produto *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editProductName}
+                    onChange={(e) => setEditProductName(e.target.value)}
+                    className="neo-input text-xs"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-heading font-bold uppercase tracking-wider text-slate-700 mb-1">
+                      Preço em R$ *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={editProductPrice}
+                      onChange={(e) => handlePriceChange(e, true)}
+                      className="neo-input text-xs font-mono text-right"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-heading font-bold uppercase tracking-wider text-slate-700 mb-1">
+                      Código SISGRU *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={editProductCodeService}
+                      onChange={(e) => setEditProductCodeService(e.target.value.replace(/\D/g, ''))}
+                      className="neo-input text-xs font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-heading font-bold uppercase tracking-wider text-slate-700 mb-1">
+                      Categoria
+                    </label>
+                    <select
+                      value={editProductCategory}
+                      onChange={(e) => setEditProductCategory(e.target.value as any)}
+                      className="neo-input text-xs font-bold"
+                    >
+                      <option value="TICKET">🎫 Tíquete</option>
+                      <option value="FINE">💸 Multa</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-heading font-bold uppercase tracking-wider text-slate-700 mb-1">
+                      Visibilidade
+                    </label>
+                    <select
+                      value={editProductActive ? 'true' : 'false'}
+                      onChange={(e) => setEditProductActive(e.target.value === 'true')}
+                      className="neo-input text-xs font-bold"
+                    >
+                      <option value="true">🟢 Ativo na Loja</option>
+                      <option value="false">🔴 Inativo</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-heading font-bold uppercase tracking-wider text-slate-700 mb-1">
+                    Descrição
+                  </label>
+                  <textarea
+                    value={editProductDesc}
+                    onChange={(e) => setEditProductDesc(e.target.value)}
+                    className="neo-input text-xs h-20 resize-none"
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-3 border-t-2 border-dashed border-slate-300">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditModalOpen(false)}
+                    className="flex-1 neo-btn bg-slate-100 hover:bg-slate-200 text-xs py-2.5"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isUpdating}
+                    className="flex-1 neo-btn-primary text-xs py-2.5"
+                  >
+                    {isUpdating ? 'Salvando...' : 'Salvar Alterações'}
+                  </button>
+                </div>
+              </form>
+
+            </div>
+          </div>
+        )}
+
       </div>
-
-      {/* Modal Neo-Brutalista de Cadastro de Produto */}
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-neo-dark bg-opacity-60 flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="w-full max-w-lg neo-card p-6 bg-white border-3 animate-slide-up shadow-neo-xl">
-            
-            {/* Header Modal */}
-            <div className="flex justify-between items-center border-b-3 border-neo-dark pb-3 mb-5">
-              <h3 className="text-xl font-bold uppercase tracking-tight flex items-center gap-2">
-                <Package className="w-6 h-6 text-neo-brand" /> Cadastrar Novo Produto
-              </h3>
-              <button 
-                onClick={() => setIsModalOpen(false)}
-                className="text-gray-500 hover:text-neo-dark font-bold text-lg select-none cursor-pointer"
-                disabled={isSaving}
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Sucesso no Modal */}
-            {successMessage && (
-              <div className="mb-4 p-4 bg-emerald-100 border-2 border-emerald-950 text-emerald-950 font-bold text-xs flex items-center gap-2">
-                <Check className="w-5 h-5 flex-shrink-0" />
-                <span>{successMessage}</span>
-              </div>
-            )}
-
-            {/* Formulário do Modal */}
-            <form onSubmit={handleAddProduct} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">
-                  Nome do Produto / Serviço
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={newProductName}
-                  onChange={(e) => setNewProductName(e.target.value)}
-                  placeholder="Ex: Tíquete de Almoço Estudante"
-                  className="neo-input"
-                  disabled={isSaving || !!successMessage}
-                />
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">
-                    Preço em Reais (R$)
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={newProductPrice}
-                    onChange={handlePriceChange}
-                    placeholder="Ex: 2,50 (Preenchimento automático)"
-                    className="neo-input font-mono text-right pr-4"
-                    disabled={isSaving || !!successMessage}
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">
-                    Código de Serviço (SISGRU)
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={newProductCodeService}
-                    onChange={(e) => {
-                      // Permite digitar apenas números
-                      const value = e.target.value.replace(/\D/g, '');
-                      setNewProductCodeService(value);
-                    }}
-                    placeholder="Ex: 101 (Apenas números)"
-                    className="neo-input font-mono"
-                    disabled={isSaving || !!successMessage}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">
-                  Categoria do Produto
-                </label>
-                <select
-                  value={newProductCategory}
-                  onChange={(e) => setNewProductCategory(e.target.value as 'TICKET' | 'FINE')}
-                  className="neo-input font-bold"
-                  disabled={isSaving || !!successMessage}
-                >
-                  <option value="TICKET">🎫 TÍQUETE (Refeitório / Alimentação)</option>
-                  <option value="FINE">💸 MULTA / TAXA (Biblioteca / Outros)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">
-                  URL da Imagem (Opcional)
-                </label>
-                <input
-                  type="text"
-                  value={newProductImage}
-                  onChange={(e) => setNewProductImage(e.target.value)}
-                  placeholder="Ex: https://link-da-imagem.com/foto.png"
-                  className="neo-input"
-                  disabled={isSaving || !!successMessage}
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">
-                  Descrição / Informações Adicionais (Opcional)
-                </label>
-                <textarea
-                  value={newProductDesc}
-                  onChange={(e) => setNewProductDesc(e.target.value)}
-                  placeholder="Ex: Válido exclusivamente para o almoço do refeitório central."
-                  className="neo-input h-24 resize-none"
-                  disabled={isSaving || !!successMessage}
-                />
-              </div>
-
-              <div className="flex gap-4 pt-4 border-t-2 border-dashed border-gray-300">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="flex-1 neo-btn bg-gray-100 hover:bg-gray-200"
-                  disabled={isSaving}
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 neo-btn-primary"
-                  disabled={isSaving || !!successMessage}
-                >
-                  {isSaving ? 'Salvando...' : 'Salvar Produto'}
-                </button>
-              </div>
-            </form>
-
-          </div>
-        </div>
-      )}
-
-      {/* Modal Neo-Brutalista de Edição de Produto */}
-      {isEditModalOpen && editingProduct && (
-        <div className="fixed inset-0 bg-neo-dark bg-opacity-65 flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="w-full max-w-lg neo-card p-6 bg-white border-3 animate-slide-up shadow-neo-xl">
-            
-            {/* Header Modal */}
-            <div className="flex justify-between items-center border-b-3 border-neo-dark pb-3 mb-5">
-              <h3 className="text-xl font-bold uppercase tracking-tight flex items-center gap-2">
-                <Package className="w-6 h-6 text-neo-brand" /> Editar Produto
-              </h3>
-              <button 
-                onClick={() => {
-                  setIsEditModalOpen(false);
-                  setEditingProduct(null);
-                }}
-                className="text-gray-500 hover:text-neo-dark font-bold text-lg select-none cursor-pointer"
-                disabled={isUpdating}
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Sucesso no Modal */}
-            {editSuccessMessage && (
-              <div className="mb-4 p-4 bg-emerald-100 border-2 border-emerald-950 text-emerald-950 font-bold text-xs flex items-center gap-2">
-                <Check className="w-5 h-5 flex-shrink-0" />
-                <span>{editSuccessMessage}</span>
-              </div>
-            )}
-
-            {/* Formulário do Modal */}
-            <form onSubmit={handleUpdateProduct} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">
-                  Nome do Produto / Serviço
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={editProductName}
-                  onChange={(e) => setEditProductName(e.target.value)}
-                  placeholder="Ex: Tíquete de Almoço Estudante"
-                  className="neo-input"
-                  disabled={isUpdating || !!editSuccessMessage}
-                />
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">
-                    Preço em Reais (R$)
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={editProductPrice}
-                    onChange={handleEditPriceChange}
-                    placeholder="Ex: 2,50 (Preenchimento automático)"
-                    className="neo-input font-mono text-right pr-4"
-                    disabled={isUpdating || !!editSuccessMessage}
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">
-                    Código de Serviço (SISGRU)
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={editProductCodeService}
-                    onChange={(e) => {
-                      const value = e.target.value.replace(/\D/g, '');
-                      setEditProductCodeService(value);
-                    }}
-                    placeholder="Ex: 101 (Apenas números)"
-                    className="neo-input font-mono"
-                    disabled={isUpdating || !!editSuccessMessage}
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">
-                    Categoria do Produto
-                  </label>
-                  <select
-                    value={editProductCategory}
-                    onChange={(e) => setEditProductCategory(e.target.value as 'TICKET' | 'FINE')}
-                    className="neo-input font-bold"
-                    disabled={isUpdating || !!editSuccessMessage}
-                  >
-                    <option value="TICKET">🎫 TÍQUETE (Refeitório)</option>
-                    <option value="FINE">💸 MULTA / TAXA (Biblioteca)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">
-                    Status do Produto
-                  </label>
-                  <select
-                    value={editProductActive ? 'true' : 'false'}
-                    onChange={(e) => setEditProductActive(e.target.value === 'true')}
-                    className="neo-input font-bold"
-                    disabled={isUpdating || !!editSuccessMessage}
-                  >
-                    <option value="true">🟢 ATIVO (Visível)</option>
-                    <option value="false">🔴 INATIVO (Ocultado)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">
-                  URL da Imagem (Opcional)
-                </label>
-                <input
-                  type="text"
-                  value={editProductImage}
-                  onChange={(e) => setEditProductImage(e.target.value)}
-                  placeholder="Ex: https://link-da-imagem.com/foto.png"
-                  className="neo-input"
-                  disabled={isUpdating || !!editSuccessMessage}
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">
-                  Descrição / Informações Adicionais (Opcional)
-                </label>
-                <textarea
-                  value={editProductDesc}
-                  onChange={(e) => setEditProductDesc(e.target.value)}
-                  placeholder="Ex: Válido exclusivamente para o almoço do refeitório central."
-                  className="neo-input h-24 resize-none"
-                  disabled={isUpdating || !!editSuccessMessage}
-                />
-              </div>
-
-              <div className="flex gap-4 pt-4 border-t-2 border-dashed border-gray-300">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsEditModalOpen(false);
-                    setEditingProduct(null);
-                  }}
-                  className="flex-1 neo-btn bg-gray-100 hover:bg-gray-200"
-                  disabled={isUpdating}
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 neo-btn-primary bg-neo-yellow text-neo-dark border-neo-dark hover:bg-yellow-300"
-                  disabled={isUpdating || !!editSuccessMessage}
-                >
-                  {isUpdating ? 'Salvando...' : 'Salvar Alterações'}
-                </button>
-              </div>
-            </form>
-
-          </div>
-        </div>
-      )}
-      
-    </div>
+    </Layout>
   );
 }

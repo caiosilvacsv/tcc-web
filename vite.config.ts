@@ -5,9 +5,8 @@ import path from 'path';
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   // Carrega as variáveis de ambiente baseadas no modo atual (development, production)
-  // O terceiro argumento '' permite carregar todas as variáveis do .env
   const env = loadEnv(mode, process.cwd(), '');
-  const targetServer = env.VITE_API_URL || 'http://localhost:8080';
+  const targetServer = (env.VITE_API_URL || 'http://localhost:8080').replace(/\/+$/, '');
 
   return {
     plugins: [react()],
@@ -19,19 +18,37 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3000,
       proxy: {
-        // 1. Roteamento de rotas de Pedidos e Pagamentos (que usam o prefixo /api)
+        // 1. Roteamento de rotas com prefixo /api (reescreve removendo /api para casar com o Spring Boot)
         '/api': {
           target: targetServer,
           changeOrigin: true,
           secure: false,
+          rewrite: (path) => path.replace(/^\/api/, ''),
         },
-        // 2. Roteamento de rotas de Autenticação (que estão mapeadas na raiz /auth no Spring Boot)
+        // 2. Roteamento de rotas de Pedidos diretas (/orders)
+        '/orders': {
+          target: targetServer,
+          changeOrigin: true,
+          secure: false,
+        },
+        // 3. Roteamento de rotas de Pagamentos diretas (/payments e /payment)
+        '/payments': {
+          target: targetServer,
+          changeOrigin: true,
+          secure: false,
+        },
+        '/payment': {
+          target: targetServer,
+          changeOrigin: true,
+          secure: false,
+        },
+        // 4. Roteamento de rotas de Autenticação (/auth)
         '/auth': {
           target: targetServer,
           changeOrigin: true,
           secure: false,
         },
-        // 3. Roteamento de rotas do Catálogo de Produtos (mapeadas na raiz /product no Spring Boot)
+        // 5. Roteamento de rotas de Produtos (/product)
         '/product': {
           target: targetServer,
           changeOrigin: true,

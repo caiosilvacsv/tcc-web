@@ -1,8 +1,8 @@
 // Se estivermos em modo de desenvolvimento (DEV), usamos a string vazia '' por padrão.
 // Isso força as requisições a passarem pelo proxy do Vite (/api, /auth, /product) configurado
 // em vite.config.ts, contornando erros de CORS no navegador local de forma limpa.
-// Em produção, usamos a URL configurada na variável de ambiente VITE_API_URL.
-const BASE_URL = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_URL || '');
+const rawBaseUrl = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_URL || '');
+const BASE_URL = rawBaseUrl.replace(/\/+$/, '');
 
 interface RequestOptions extends RequestInit {
   params?: Record<string, string>;

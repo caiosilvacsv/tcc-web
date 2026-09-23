@@ -24,14 +24,23 @@ export function usePaymentStatus(paymentId: string | undefined) {
 
   useEffect(() => {
     // 1. Se não houver paymentId, interrompe a execução
-    if (!paymentId) return;
+    if (!paymentId) {
+      setData(null);
+      setIsLoading(false);
+      setError(null);
+      return;
+    }
 
     setIsLoading(true);
     setError(null);
 
+    const rawBaseUrl = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_URL || '');
+    const baseUrl = rawBaseUrl.replace(/\/+$/, '');
+    // Suporta tanto o proxy do vite quanto chamadas diretas
+    const sseUrl = `${baseUrl}/payments/${paymentId}/sse`;
+
     // 2. Instancia o EventSource nativo apontando para a rota de SSE do backend Java
-    // O proxy do Vite (/api) encaminha de forma transparente e segura para o Spring Boot
-    const eventSource = new EventSource(`/api/payments/${paymentId}/sse`);
+    const eventSource = new EventSource(sseUrl);
 
     // 3. Escuta o evento reativo específico disparado pelo Spring Boot (PAYMENT_PAID)
     eventSource.addEventListener('PAYMENT_PAID', (event) => {
@@ -52,10 +61,9 @@ export function usePaymentStatus(paymentId: string | undefined) {
 
     // 4. Trata falhas na conexão de eventos (Ex: Timeout de rede)
     eventSource.onerror = (err) => {
-      console.error('Erro na conexão reativa SSE:', err);
+      console.warn('Conexão reativa SSE aguardando ou oscilando:', err);
       // O EventSource nativo se reconecta automaticamente em instabilidades de rede.
-      // Reportamos um status de espera resiliente para o usuário final
-      setError('Aguardando compensação do pagamento pela STN/PagTesouro...');
+      setError('Aguardando confirmação bancária em tempo real (STN / PagTesouro)...');
     };
 
     // 5. Função de limpeza (cleanup) do React para fechar a conexão SSE ao desmontar o componente

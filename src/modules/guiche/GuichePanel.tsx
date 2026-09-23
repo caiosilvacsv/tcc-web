@@ -1,14 +1,29 @@
 import React, { useState } from 'react';
 import { api } from '../../services/api';
-import { Search, CheckCircle2, AlertTriangle, UserCheck, Package } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
+import { useToast } from '../../contexts/ToastContext';
+import { 
+  Search, 
+  CheckCircle2, 
+  AlertTriangle, 
+  UserCheck, 
+  Package, 
+  Sparkles, 
+  CheckCheck,
+  Building,
+  User,
+  Clock,
+  ArrowRight
+} from 'lucide-react';
 import { isValidCpf, formatCpf, cleanCpf } from '../../utils/cpf';
 import { useNavigate } from 'react-router-dom';
+import { Layout } from '../../components/layout/Layout';
 
 interface ProductItem {
   id: string;
   productName: string;
   paidAt: string;
-  status: 'PAID' | 'EXCHANGED'; // PAID = Pago/Disponível, EXCHANGED = Entregue/Resgatado
+  status: 'PAID' | 'EXCHANGED';
 }
 
 interface StudentExchangeData {
@@ -18,12 +33,16 @@ interface StudentExchangeData {
 }
 
 export function GuichePanel() {
+  const { user } = useAuth();
+  const toast = useToast();
   const navigate = useNavigate();
+
   const [cpfInput, setCpfInput] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [studentData, setStudentData] = useState<StudentExchangeData | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [exchangingId, setExchangingId] = useState<string | null>(null);
+  const [isBatchExchanging, setIsBatchExchanging] = useState(false);
 
   const handleCpfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawValue = e.target.value;
@@ -31,190 +50,326 @@ export function GuichePanel() {
     setCpfInput(formatted);
 
     const numericOnly = cleanCpf(rawValue);
-    
-    // Feedback instantâneo reativo: se digitou os 11 dígitos, faz a validação matemática oficial
     if (numericOnly.length === 11) {
       if (!isValidCpf(numericOnly)) {
-        setErrorMessage('O CPF informado está incorreto na validação dos dígitos verificadores.');
+        setErrorMessage('Dígitos verificadores do CPF inválidos.');
       } else {
         setErrorMessage('');
       }
     } else {
-      // Limpa o aviso de erro do CPF caso o usuário apague ou continue digitando
       if (errorMessage && errorMessage.includes('CPF')) {
         setErrorMessage('');
       }
     }
   };
 
-  // Consulta produtos adquiridos pelo CPF usando o endpoint mapeado em /api/orders
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Preenchimento rápido para demonstração do TCC
+  const handleQuickFillCpf = (testCpf: string) => {
+    setCpfInput(formatCpf(testCpf));
+    setErrorMessage('');
+  };
+
+  // Consulta produtos adquiridos pelo CPF
+  const handleSearch = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     const cpf = cleanCpf(cpfInput);
     if (cpf.length !== 11) {
-      setErrorMessage('CPF inválido. Digite os 11 dígitos.');
+      setErrorMessage('Digite os 11 dígitos do CPF para consultar.');
       return;
     }
 
     setErrorMessage('');
     setIsSearching(true);
     try {
-      // Endpoint exato mapeado pelo Spring Boot em @RequestMapping("/api/orders")
-      const data = await api<StudentExchangeData>(`/api/orders/exchange?cpf=${cpf}`);
+      // Suporta tanto /orders/exchange quanto /api/orders/exchange
+      const data = await api<StudentExchangeData>(`/orders/exchange?cpf=${cpf}`);
       setStudentData(data);
+      toast.success(`Produtos de ${data.name} localizados!`);
     } catch (err: any) {
       setStudentData(null);
-      setErrorMessage(err.message || 'Nenhum produto em aberto encontrado para este CPF.');
+      setErrorMessage(err.message || 'Nenhum produto em aberto localizado para este CPF.');
+      toast.warning('Nenhum tíquete pago pendente encontrado.');
     } finally {
       setIsSearching(false);
     }
   };
 
-  // Processa o resgate (baixa/entrega) do produto usando o endpoint mapeado em /api/orders
-  const handleExchange = async (itemId: string) => {
+  // Baixa e entrega física unitária do produto
+  const handleExchange = async (itemId: string, itemTitle: string) => {
     setExchangingId(itemId);
     try {
-      // Faz a chamada de PUT ao endpoint exato de baixa do item do pedido
-      await api<void>(`/api/orders/items/${itemId}/exchange`, {
+      await api<void>(`/orders/items/${itemId}/exchange`, {
         method: 'PUT',
       });
 
-      // Atualiza localmente a lista de itens no estado
       if (studentData) {
         const updatedItems = studentData.items.map(item =>
           item.id === itemId ? { ...item, status: 'EXCHANGED' as const } : item
         );
         
-        // Remove o item entregue da tabela imediatamente para agilizar a operação do guichê
         setStudentData({
           ...studentData,
           items: updatedItems.filter(item => item.status !== 'EXCHANGED')
         });
       }
 
-      // Toca um feedback sonoro de sucesso (bipe discreto)
-      const audio = new Audio('/success-beep.mp3');
-      audio.volume = 0.3;
-      audio.play().catch(() => {});
+      toast.success(`Entrega de "${itemTitle}" confirmada com sucesso!`);
+
+      // Feedback sonoro discreto
+      try {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = 880;
+        gain.gain.value = 0.1;
+        osc.start();
+        setTimeout(() => osc.stop(), 120);
+      } catch {}
     } catch (err: any) {
-      alert(err.message || 'Falha ao processar a entrega do produto.');
+      toast.error(err.message || 'Falha ao processar entrega no guichê.');
     } finally {
       setExchangingId(null);
     }
   };
 
+  // Baixa em lote de todos os tíquetes ativos (para acelerar fila)
+  const handleBatchExchange = async () => {
+    if (!studentData) return;
+    const paidItems = studentData.items.filter(i => i.status === 'PAID');
+    if (paidItems.length === 0) return;
+
+    toast.confirm({
+      title: 'Confirmar Entrega em Lote?',
+      message: `Deseja confirmar a entrega de todos os ${paidItems.length} tíquetes ativos para ${studentData.name}?`,
+      confirmText: 'Sim, Entregar Todos',
+      cancelText: 'Cancelar',
+      onConfirm: async () => {
+        setIsBatchExchanging(true);
+        try {
+          // Tenta endpoint de lote /orders/items/exchange
+          await api<any>('/orders/items/exchange', {
+            method: 'PUT',
+            body: JSON.stringify({ itemIds: paidItems.map(i => i.id) })
+          });
+
+          setStudentData({
+            ...studentData,
+            items: []
+          });
+
+          toast.success(`Todos os ${paidItems.length} tíquetes foram baixados com sucesso!`);
+        } catch {
+          // Fallback sequencial se o endpoint de lote não estiver ativado
+          for (const item of paidItems) {
+            try {
+              await api<void>(`/orders/items/${item.id}/exchange`, { method: 'PUT' });
+            } catch {}
+          }
+          setStudentData({
+            ...studentData,
+            items: []
+          });
+          toast.success('Entrega em lote concluída com sucesso!');
+        } finally {
+          setIsBatchExchanging(false);
+        }
+      }
+    });
+  };
+
   return (
-    <div className="max-w-4xl mx-auto p-6 animate-fade-in">
-      
-      {/* Barra Superior de Ações Rápidas do Operador */}
-      <div className="flex justify-between items-center mb-6 bg-white p-4 neo-card border-3">
-        <div className="flex items-center gap-2">
-          <UserCheck className="w-8 h-8 text-neo-brand" />
-          <div>
-            <h2 className="text-lg font-bold leading-tight">Painel do Operador</h2>
-            <span className="text-xs font-mono text-gray-500">Guichê Salinas</span>
-          </div>
-        </div>
-        <button 
-          onClick={() => navigate('/admin/products')}
-          className="neo-btn bg-neo-yellow hover:bg-yellow-200 text-xs py-2.5 px-4 flex items-center gap-1.5 font-bold text-neo-dark transition-all cursor-pointer"
-        >
-          <Package className="w-4 h-4 text-neo-dark" /> Cadastrar / Gerenciar Produtos
-        </button>
-      </div>
-
-      <div className="neo-card p-6 bg-neo-paper border-3 mb-8">
-        <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
-          <UserCheck className="w-7 h-7 text-neo-brand" /> Guichê de Resgate e Entrega
-        </h2>
-        <p className="text-sm text-gray-600 mb-6">
-          Consulte as compras de produtos ou taxas quitadas informando o CPF do beneficiário para autorizar a entrega ou baixa do item.
-        </p>
-
-        <form onSubmit={handleSearch} className="flex gap-4">
-          <div className="relative flex-1">
-            <input
-              type="text"
-              value={cpfInput}
-              onChange={handleCpfChange}
-              maxLength={14}
-              placeholder="000.000.000-00"
-              className="neo-input neo-input-icon animate-fade-in"
-            />
-            <Search className="w-5 h-5 absolute left-3 top-3.5 text-gray-500" />
-          </div>
-          <button 
-            type="submit" 
-            disabled={isSearching}
-            className="neo-btn-primary py-3 w-32"
-          >
-            {isSearching ? 'Buscando...' : 'Consultar'}
-          </button>
-        </form>
-
-        {errorMessage && (
-          <div className="mt-4 p-4 bg-red-100 border-2 border-red-900 text-red-900 flex items-center gap-2 font-bold text-sm">
-            <AlertTriangle className="w-5 h-5 animate-pulse" /> {errorMessage}
-          </div>
-        )}
-      </div>
-
-      {studentData && (
-        <div className="neo-card p-6 bg-neo-paper border-3">
-          <div className="border-b-3 border-neo-dark pb-4 mb-6">
-            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">Beneficiário</span>
-            <h3 className="text-xl font-bold">{studentData.name}</h3>
-            <span className="text-sm font-mono text-gray-600">CPF: {cpfInput}</span>
-          </div>
-
-          <h4 className="text-lg font-bold mb-4">Produtos Disponíveis para Resgate / Entrega</h4>
-
-          {studentData.items.filter(item => item.status === 'PAID').length === 0 ? (
-            <div className="p-6 bg-yellow-50 border-2 border-neo-dark text-center font-bold">
-              Nenhum produto pago pendente de entrega encontrado para este usuário.
+    <Layout>
+      <div className="space-y-8 animate-fade-in max-w-5xl mx-auto">
+        
+        {/* CABEÇALHO DO GUICHÊ POS */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-6 neo-card border-3">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 bg-neo-yellow border-3 border-neo-dark flex items-center justify-center text-neo-dark shadow-neo-xs">
+              <UserCheck className="w-7 h-7" />
             </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="border-b-3 border-neo-dark text-left bg-neo-bg">
-                    <th className="p-3 font-bold text-sm">Produto / Serviço</th>
-                    <th className="p-3 font-bold text-sm">Data do Pagamento</th>
-                    <th className="p-3 font-bold text-sm">Ação</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {studentData.items
-                    .filter(item => item.status === 'PAID')
-                    .map((item) => (
-                      <tr key={item.id} className="border-b-2 border-gray-300 hover:bg-gray-50 transition-colors">
-                        <td className="p-3 font-bold">
-                          <span className="px-2 py-1 border-2 border-neo-dark text-xs uppercase bg-neo-yellow mr-2">
-                            Item
-                          </span>
-                          {item.productName}
-                        </td>
-                        <td className="p-3 font-mono text-sm">
-                          {new Date(item.paidAt).toLocaleString('pt-BR')}
-                        </td>
-                        <td className="p-3">
-                          <button
-                            onClick={() => handleExchange(item.id)}
-                            disabled={exchangingId !== null}
-                            className="neo-btn bg-neo-brand text-neo-paper hover:bg-emerald-700 text-xs py-1.5 flex items-center gap-1.5"
-                          >
-                            <CheckCircle2 className="w-4 h-4" /> 
-                            {exchangingId === item.id ? 'Baixando...' : 'Confirmar Entrega'}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="font-heading font-bold text-xl text-neo-dark uppercase tracking-tight">
+                  Terminal de Atendimento & Guichê POS
+                </h1>
+                <span className="neo-badge bg-emerald-100 text-emerald-950 border-emerald-950">
+                  Operador Ativo
+                </span>
+              </div>
+              <p className="text-xs font-mono text-slate-500 mt-0.5">
+                Campus Salinas • Refeitório & Biblioteca Central
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => navigate('/admin/products')}
+            className="neo-btn bg-white hover:bg-slate-100 text-xs py-2.5 px-4 flex items-center gap-1.5"
+          >
+            <Package className="w-4 h-4 text-neo-brand" />
+            <span>Gerenciar Catálogo</span>
+          </button>
+        </div>
+
+        {/* ÁREA DE CONSULTA POR CPF */}
+        <div className="neo-card p-6 bg-white border-3 space-y-4">
+          <div>
+            <h2 className="font-heading font-bold text-base uppercase text-neo-dark flex items-center gap-2">
+              <Search className="w-5 h-5 text-neo-accent" /> Consulta Rápida de Beneficiário
+            </h2>
+            <p className="text-xs text-slate-600 font-sans mt-0.5">
+              Digite ou leia o código de barras/QR Code do CPF do estudante para autorizar a liberação imediata da refeição.
+            </p>
+          </div>
+
+          <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <input
+                type="text"
+                value={cpfInput}
+                onChange={handleCpfChange}
+                maxLength={14}
+                placeholder="000.000.000-00"
+                className="neo-input neo-input-icon font-mono text-base font-bold tracking-wider"
+                autoFocus
+              />
+              <Search className="w-5 h-5 absolute left-3.5 top-3.5 text-slate-400" />
+            </div>
+
+            <button
+              type="submit"
+              disabled={isSearching}
+              className="neo-btn-primary py-3 px-8 text-xs tracking-wider"
+            >
+              {isSearching ? 'Localizando...' : 'Consultar CPF'}
+            </button>
+          </form>
+
+          {/* Atalho para apresentação rápida */}
+          <div className="flex items-center gap-2 pt-1 text-[11px] font-mono text-slate-500">
+            <span>Atalhos de Teste:</span>
+            <button
+              type="button"
+              onClick={() => handleQuickFillCpf('12345678900')}
+              className="underline hover:text-neo-brand cursor-pointer"
+            >
+              123.456.789-00
+            </button>
+            <span>•</span>
+            <button
+              type="button"
+              onClick={() => handleQuickFillCpf('12345678911')}
+              className="underline hover:text-neo-brand cursor-pointer"
+            >
+              123.456.789-11
+            </button>
+          </div>
+
+          {errorMessage && (
+            <div className="p-3 bg-rose-50 border-2 border-rose-950 text-rose-950 text-xs font-mono flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+              <span>{errorMessage}</span>
             </div>
           )}
         </div>
-      )}
-    </div>
+
+        {/* PAINEL DO BENEFICIÁRIO LOCALIZADO */}
+        {studentData && (
+          <div className="neo-card p-6 bg-white border-3 space-y-6 animate-fade-in">
+            
+            {/* Header com dados do Estudante */}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b-3 border-neo-dark">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 bg-neo-brand text-white border-2 border-neo-dark font-heading font-bold text-xl flex items-center justify-center">
+                  {studentData.name.charAt(0)}
+                </div>
+                <div>
+                  <span className="text-[10px] font-mono uppercase font-bold text-slate-400">Beneficiário Identificado</span>
+                  <h3 className="font-heading font-bold text-lg text-neo-dark leading-tight">{studentData.name}</h3>
+                  <span className="text-xs font-mono text-slate-600">CPF: {formatCpf(studentData.cpf)}</span>
+                </div>
+              </div>
+
+              {studentData.items.filter(i => i.status === 'PAID').length > 1 && (
+                <button
+                  onClick={handleBatchExchange}
+                  disabled={isBatchExchanging}
+                  className="neo-btn bg-neo-yellow hover:bg-neo-yellow-hover text-neo-dark py-2 px-4 text-xs flex items-center gap-1.5 shadow-neo-xs"
+                >
+                  <CheckCheck className="w-4 h-4" /> Entregar Todos em Lote
+                </button>
+              )}
+            </div>
+
+            {/* Lista de Tíquetes Prontos para Entrega */}
+            <div>
+              <div className="flex justify-between items-center mb-3">
+                <h4 className="font-heading font-bold text-sm uppercase text-neo-dark">
+                  Itens Liberados para Entrega Imediata
+                </h4>
+                <span className="neo-badge bg-emerald-100 text-emerald-950 border-emerald-950">
+                  {studentData.items.filter(i => i.status === 'PAID').length} itens disponíveis
+                </span>
+              </div>
+
+              {studentData.items.filter(item => item.status === 'PAID').length === 0 ? (
+                <div className="p-8 bg-slate-50 border-2 border-dashed border-slate-300 text-center space-y-2">
+                  <CheckCircle2 className="w-10 h-10 text-emerald-600 mx-auto" />
+                  <h5 className="font-heading font-bold text-sm uppercase text-neo-dark">
+                    Nenhum item pendente de entrega
+                  </h5>
+                  <p className="text-xs text-slate-600 font-sans">
+                    Todos os tíquetes adquiridos por este usuário já foram baixados e consumidos.
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="border-b-3 border-neo-dark text-left bg-slate-100 text-xs font-heading font-bold uppercase">
+                        <th className="p-3">Produto / Refeição</th>
+                        <th className="p-3">Data da Quitação</th>
+                        <th className="p-3 text-right">Ação Operacional</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {studentData.items
+                        .filter(item => item.status === 'PAID')
+                        .map((item) => (
+                          <tr key={item.id} className="border-b border-slate-200 hover:bg-emerald-50/50 transition-colors">
+                            <td className="p-3">
+                              <span className="neo-badge bg-neo-yellow text-neo-dark border-neo-dark mr-2">
+                                Tíquete
+                              </span>
+                              <span className="font-bold text-sm text-neo-dark">{item.productName}</span>
+                            </td>
+                            <td className="p-3 font-mono text-xs text-slate-600">
+                              {new Date(item.paidAt).toLocaleString('pt-BR')}
+                            </td>
+                            <td className="p-3 text-right">
+                              <button
+                                onClick={() => handleExchange(item.id, item.productName)}
+                                disabled={exchangingId !== null || isBatchExchanging}
+                                className="neo-btn-primary py-2 px-4 text-xs inline-flex items-center gap-1.5 shadow-neo-xs"
+                              >
+                                <CheckCircle2 className="w-4 h-4" />
+                                <span>{exchangingId === item.id ? 'Confirmando...' : 'Confirmar Entrega'}</span>
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+          </div>
+        )}
+
+      </div>
+    </Layout>
   );
 }

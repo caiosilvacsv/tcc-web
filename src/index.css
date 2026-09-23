@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -6,7 +6,7 @@
 
 @layer base {
   body {
-    @apply bg-neo-bg text-neo-dark font-body antialiased;
+    @apply bg-neo-bg text-neo-dark font-sans antialiased selection:bg-neo-yellow selection:text-neo-dark;
   }
   
   h1, h2, h3, h4, h5, h6 {
@@ -17,41 +17,98 @@
 @layer utilities {
   /* Cards Neo-Brutalistas */
   .neo-card {
-    @apply bg-neo-paper border-3 border-neo-dark shadow-neo-md rounded-none transition-all duration-200;
+    @apply bg-neo-paper border-3 border-neo-dark shadow-neo-md rounded-none transition-all duration-150;
   }
   
   .neo-card-hover {
-    @apply hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-neo-lg;
+    @apply hover:-translate-x-0.5 hover:-translate-y-0.5 hover:shadow-neo-lg transition-all duration-150;
+  }
+
+  .neo-card-interactive {
+    @apply cursor-pointer hover:-translate-x-0.5 hover:-translate-y-0.5 hover:shadow-neo-lg active:translate-x-0.5 active:translate-y-0.5 active:shadow-neo-xs transition-all duration-150;
   }
   
   /* Botões Neo-Brutalistas */
   .neo-btn {
-    @apply px-4 py-2 font-heading font-bold uppercase tracking-wider text-sm border-3 border-neo-dark rounded-none shadow-neo-sm active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all cursor-pointer select-none inline-flex items-center justify-center gap-2;
+    @apply px-4 py-2.5 font-heading font-bold uppercase tracking-wider text-xs border-3 border-neo-dark rounded-none shadow-neo-sm active:translate-x-[2px] active:translate-y-[2px] active:shadow-none hover:-translate-x-[1px] hover:-translate-y-[1px] hover:shadow-neo-md transition-all duration-100 cursor-pointer select-none inline-flex items-center justify-center gap-2;
   }
   
   .neo-btn-primary {
-    @apply neo-btn bg-neo-brand text-neo-paper hover:bg-emerald-700;
+    @apply neo-btn bg-neo-brand text-white hover:bg-neo-brand-hover;
   }
   
   .neo-btn-accent {
-    @apply neo-btn bg-neo-accent text-neo-paper hover:bg-blue-700;
+    @apply neo-btn bg-neo-accent text-white hover:bg-neo-accent-hover;
   }
   
   .neo-btn-yellow {
-    @apply neo-btn bg-neo-yellow text-neo-dark hover:bg-amber-500;
+    @apply neo-btn bg-neo-yellow text-neo-dark hover:bg-neo-yellow-hover;
+  }
+
+  .neo-btn-secondary {
+    @apply neo-btn bg-white text-neo-dark hover:bg-slate-100;
+  }
+
+  .neo-btn-danger {
+    @apply neo-btn bg-neo-red-light text-red-900 border-red-900 hover:bg-red-200;
+  }
+
+  .neo-btn-ghost {
+    @apply px-3 py-1.5 font-heading font-bold uppercase tracking-wider text-xs text-neo-dark hover:bg-slate-200 transition-colors inline-flex items-center gap-1.5;
   }
   
   /* Inputs Neo-Brutalistas */
   .neo-input {
-    @apply w-full px-3 py-2 border-3 border-neo-dark rounded-none font-body placeholder-gray-500 bg-white focus:outline-none focus:bg-white focus:shadow-neo-sm transition-all;
+    @apply w-full px-3.5 py-2.5 border-3 border-neo-dark rounded-none font-sans text-sm placeholder-slate-400 bg-white focus:outline-none focus:bg-white focus:shadow-neo-sm focus:border-neo-brand transition-all;
   }
 
   .neo-input-icon {
-    @apply pl-12 pr-4 !important;
+    @apply pl-11 pr-4 !important;
   }
 
-  /* Badges */
+  /* Badges & Pills */
   .neo-badge {
-    @apply px-2 py-0.5 border-2 border-neo-dark text-xs font-bold font-heading uppercase inline-block;
+    @apply px-2.5 py-0.5 border-2 border-neo-dark text-[11px] font-bold font-mono uppercase inline-flex items-center gap-1 tracking-wide;
   }
+
+  .neo-badge-ticket {
+    @apply neo-badge bg-neo-yellow text-neo-dark;
+  }
+
+  .neo-badge-fine {
+    @apply neo-badge bg-neo-accent-light text-neo-accent border-neo-dark;
+  }
+
+  .neo-badge-success {
+    @apply neo-badge bg-neo-brand-light text-emerald-950 border-neo-dark;
+  }
+
+  .neo-badge-pending {
+    @apply neo-badge bg-amber-100 text-amber-950 border-neo-dark animate-pulse;
+  }
+
+  /* Picote de Papel Térmico / Cupom Fiscal */
+  .ticket-tear {
+    background-image: radial-gradient(circle at 10px -5px, transparent 12px, #FFFFFF 13px);
+    background-size: 20px 20px;
+  }
+}
+
+/* Animações utilitárias */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes pulseGlow {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.8; transform: scale(1.05); }
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 2s infinite ease-in-out;
 }
