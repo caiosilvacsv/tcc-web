@@ -19,16 +19,31 @@ import { isValidCpf, formatCpf, cleanCpf } from '../../utils/cpf';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '../../components/layout/Layout';
 
+interface TicketReadyResponseDTO {
+  itemId: string;
+  orderId: string;
+  productTitle: string;
+  quantity: number;
+  totalAmount: number;
+  buyerName: string;
+  buyerCpf: string;
+  buyerType: 'STUDENT' | 'GUEST';
+  paidAt: string;
+}
+
 interface ProductItem {
   id: string;
   productName: string;
   paidAt: string;
+  quantity?: number;
+  totalAmount?: number;
   status: 'PAID' | 'EXCHANGED';
 }
 
 interface StudentExchangeData {
   name: string;
   cpf: string;
+  buyerType?: 'STUDENT' | 'GUEST';
   items: ProductItem[];
 }
 
@@ -69,7 +84,7 @@ export function GuichePanel() {
     setErrorMessage('');
   };
 
-  // Consulta produtos adquiridos pelo CPF
+  // Consulta produtos adquiridos pelo CPF via rota oficial /orders/tickets?cpf=...
   const handleSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const cpf = cleanCpf(cpfInput);
@@ -81,10 +96,31 @@ export function GuichePanel() {
     setErrorMessage('');
     setIsSearching(true);
     try {
-      // Suporta tanto /orders/exchange quanto /api/orders/exchange
-      const data = await api<StudentExchangeData>(`/orders/exchange?cpf=${cpf}`);
-      setStudentData(data);
-      toast.success(`Produtos de ${data.name} localizados!`);
+      // Rota oficial do backend: GET /orders/tickets?cpf=00000000000
+      const tickets = await api<TicketReadyResponseDTO[]>(`/orders/tickets?cpf=${cpf}`);
+
+      if (!tickets || tickets.length === 0) {
+        setStudentData(null);
+        setErrorMessage('Nenhum tíquete em aberto localizado para este CPF.');
+        toast.warning('Nenhum tíquete pago pendente encontrado.');
+        return;
+      }
+
+      const firstTicket = tickets[0];
+      setStudentData({
+        name: firstTicket.buyerName || 'Contribuinte / Aluno',
+        cpf: firstTicket.buyerCpf || cpf,
+        buyerType: firstTicket.buyerType,
+        items: tickets.map(t => ({
+          id: t.itemId,
+          productName: t.productTitle,
+          quantity: t.quantity,
+          totalAmount: t.totalAmount,
+          paidAt: t.paidAt,
+          status: 'PAID'
+        }))
+      });
+      toast.success(`${tickets.length} tíquete(s) de ${firstTicket.buyerName || 'Contribuinte'} localizado(s)!`);
     } catch (err: any) {
       setStudentData(null);
       setErrorMessage(err.message || 'Nenhum produto em aberto localizado para este CPF.');
@@ -286,7 +322,18 @@ export function GuichePanel() {
                   {studentData.name.charAt(0)}
                 </div>
                 <div>
-                  <span className="text-[10px] font-mono uppercase font-bold text-slate-400">Beneficiário Identificado</span>
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="text-[10px] font-mono uppercase font-bold text-slate-400">Beneficiário Identificado</span>
+                    {studentData.buyerType && (
+                      <span className={`px-2 py-0.2 text-[10px] font-mono font-bold uppercase border ${
+                        studentData.buyerType === 'STUDENT'
+                          ? 'bg-blue-100 text-blue-900 border-blue-950'
+                          : 'bg-amber-100 text-amber-900 border-amber-950'
+                      }`}>
+                        {studentData.buyerType === 'STUDENT' ? '🎓 Aluno / Servidor' : '👤 Convidado / Visitante'}
+                      </span>
+                    )}
+                  </div>
                   <h3 className="font-heading font-bold text-lg text-neo-dark leading-tight">{studentData.name}</h3>
                   <span className="text-xs font-mono text-slate-600">CPF: {formatCpf(studentData.cpf)}</span>
                 </div>
@@ -344,6 +391,11 @@ export function GuichePanel() {
                                 Tíquete
                               </span>
                               <span className="font-bold text-sm text-neo-dark">{item.productName}</span>
+                              {item.quantity && item.quantity > 1 && (
+                                <span className="ml-2 font-mono text-xs font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 border border-slate-300">
+                                  {item.quantity}x
+                                </span>
+                              )}
                             </td>
                             <td className="p-3 font-mono text-xs text-slate-600">
                               {new Date(item.paidAt).toLocaleString('pt-BR')}
