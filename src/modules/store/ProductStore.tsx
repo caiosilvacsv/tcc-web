@@ -26,6 +26,7 @@ import {
 import { isValidCpf, formatCpf, cleanCpf } from '../../utils/cpf';
 import { usePaymentStatus } from '../../hooks/usePaymentStatus';
 import { Layout } from '../../components/layout/Layout';
+import { PagTesouroPaymentModal } from '../../components/payment/PagTesouroPaymentModal';
 
 interface Product {
   id: string;
@@ -39,8 +40,10 @@ interface Product {
 }
 
 interface CheckoutResponse {
-  idPayment: string;
-  nextUrl: string;
+  idPayment?: string;
+  paymentId?: string;
+  nextUrl?: string;
+  proximaUrl?: string;
 }
 
 interface OrderResponse {
@@ -70,6 +73,8 @@ export function ProductStore() {
   const [currentPaymentId, setCurrentPaymentId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [lastCheckoutAmount, setLastCheckoutAmount] = useState<number>(0);
 
   // Escuta reativa SSE da liquidação da fatura do PagTesouro
   const { data: sseData } = usePaymentStatus(currentPaymentId || undefined);
@@ -256,13 +261,17 @@ export function ProductStore() {
 
         const mainCheckout = Array.isArray(checkoutResponse) ? checkoutResponse[0] : checkoutResponse;
 
-        setCheckoutUrl(mainCheckout.nextUrl);
-        setCurrentPaymentId(mainCheckout.idPayment);
+        setLastCheckoutAmount(getSubtotal());
+        setCheckoutUrl(mainCheckout.nextUrl || mainCheckout.proximaUrl || '');
+        setCurrentPaymentId(mainCheckout.idPayment || mainCheckout.paymentId || null);
+        setIsPaymentModalOpen(true);
+        setIsCheckoutMode(false);
         clearCart();
-        toast.success('Cobrança PagTesouro gerada com sucesso!');
+        toast.success('Ambiente oficial do PagTesouro carregado com sucesso!');
       } else {
         // FLUXO B: Visitante Anônimo (Checkout direto simplificado)
         const firstItem = cartItems[0];
+        const itemTotal = firstItem.price * firstItem.quantity;
         
         const checkoutResponse = await api<CheckoutResponse>('/payments/anonymous', {
           method: 'POST',
@@ -280,10 +289,13 @@ export function ProductStore() {
           })
         });
 
-        setCheckoutUrl(checkoutResponse.nextUrl);
-        setCurrentPaymentId(checkoutResponse.idPayment);
+        setLastCheckoutAmount(itemTotal);
+        setCheckoutUrl(checkoutResponse.nextUrl || checkoutResponse.proximaUrl || '');
+        setCurrentPaymentId(checkoutResponse.idPayment || checkoutResponse.paymentId || null);
+        setIsPaymentModalOpen(true);
+        setIsCheckoutMode(false);
         clearCart();
-        toast.success('Cobrança direta PagTesouro gerada com sucesso!');
+        toast.success('Ambiente oficial do PagTesouro carregado com sucesso!');
       }
     } catch (err: any) {
       toast.error(err.message || 'Falha ao processar checkout com o PagTesouro. Tente novamente.');
@@ -686,34 +698,35 @@ export function ProductStore() {
                   )}
                 </div>
               ) : checkoutUrl ? (
-                // Guia Gerada - Aguardando Pagamento e Escuta SSE
-                <div className="text-center p-6 space-y-4 bg-amber-50/70 border-3 border-neo-dark animate-fade-in shadow-neo-md">
+                // Guia Gerada - Aguardando Pagamento e Escuta SSE com Modal Iframe
+                <div className="text-center p-6 space-y-4 bg-emerald-50/70 border-3 border-neo-dark animate-fade-in shadow-neo-md">
                   <div className="w-12 h-12 bg-neo-yellow border-2 border-neo-dark flex items-center justify-center mx-auto shadow-neo-xs">
                     <CreditCard className="w-6 h-6 text-neo-dark" />
                   </div>
 
                   <div className="space-y-1">
+                    <span className="neo-badge bg-emerald-200 text-emerald-950 border-emerald-950">
+                      ⚡ Pagamento Ativo
+                    </span>
                     <h3 className="font-heading font-bold text-base text-neo-dark uppercase">
-                      Cobrança PagTesouro Gerada!
+                      Ambiente PagTesouro Pronto
                     </h3>
                     <p className="text-xs text-slate-700 font-sans leading-relaxed">
-                      A guia foi registrada no Tesouro Nacional. Clique no botão abaixo para concluir via Pix ou Cartão.
+                      O ambiente oficial foi carregado no iFrame para você pagar com Pix ou Cartão.
                     </p>
                   </div>
 
-                  <a
-                    href={checkoutUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full neo-btn-primary py-3.5 inline-flex items-center justify-center gap-2 font-bold no-underline text-xs tracking-wider"
+                  <button
+                    onClick={() => setIsPaymentModalOpen(true)}
+                    className="w-full neo-btn-primary py-3.5 flex items-center justify-center gap-2 font-bold text-xs tracking-wider"
                   >
-                    <span>Ir para o PagTesouro</span>
-                    <ExternalLink className="w-4 h-4" />
-                  </a>
+                    <CreditCard className="w-4 h-4" />
+                    <span>Abrir Tela de Pagamento (iFrame)</span>
+                  </button>
 
                   {/* Indicador reativo de escuta Server-Sent Events */}
                   <div className="p-3 bg-white border-2 border-neo-dark flex items-center gap-2.5 text-left text-[11px] font-mono text-slate-700 shadow-neo-xs">
-                    <span className="w-2.5 h-2.5 bg-amber-500 rounded-full animate-ping flex-shrink-0" />
+                    <span className="w-2.5 h-2.5 bg-emerald-600 rounded-full animate-ping flex-shrink-0" />
                     <span>Aguardando liquidação bancária automática em tempo real...</span>
                   </div>
 
@@ -722,10 +735,11 @@ export function ProductStore() {
                       setCheckoutUrl(null);
                       setCurrentPaymentId(null);
                       setIsCheckoutMode(false);
+                      setIsPaymentModalOpen(false);
                     }}
                     className="w-full neo-btn bg-white hover:bg-slate-100 text-xs py-2"
                   >
-                    Voltar ao Carrinho
+                    Cancelar e Voltar à Loja
                   </button>
                 </div>
               ) : (
@@ -848,6 +862,25 @@ export function ProductStore() {
         </div>
 
       </div>
+
+      {/* MODAL COM IFRAME OFICIAL DO PAGTESOURO (SEM ABRIR ABA EXTERNA) */}
+      {checkoutUrl && (
+        <PagTesouroPaymentModal
+          isOpen={isPaymentModalOpen}
+          onClose={() => setIsPaymentModalOpen(false)}
+          paymentUrl={checkoutUrl}
+          paymentId={currentPaymentId || undefined}
+          amount={lastCheckoutAmount}
+          contributorCpf={contributorCpf}
+          isAuthenticated={isAuthenticated}
+          onSuccessRedirect={() => {
+            setIsPaymentModalOpen(false);
+            setCheckoutUrl(null);
+            setCurrentPaymentId(null);
+            navigate('/dashboard');
+          }}
+        />
+      )}
     </Layout>
   );
 }

@@ -27,6 +27,7 @@ import {
   Check
 } from 'lucide-react';
 import { Layout } from '../../components/layout/Layout';
+import { PagTesouroPaymentModal } from '../../components/payment/PagTesouroPaymentModal';
 
 interface PurchasedProduct {
   id: string;
@@ -61,6 +62,7 @@ interface PaymentInvoice {
   amount: number;
   status: 'CRIADO' | 'INICIADO' | 'SUBMETIDO' | 'CONCLUIDO' | 'CANCELADO' | 'CREATED' | 'STARTED' | 'SUBMITTED' | 'COMPLETED' | 'FAILED';
   nextUrl?: string;
+  proximaUrl?: string;
   paymentMethod?: string;
   pagtesouroPaymentId?: string;
   pspName?: string;
@@ -88,6 +90,7 @@ export function UserDashboard() {
   const [invoices, setInvoices] = useState<PaymentInvoice[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activePaymentInvoice, setActivePaymentInvoice] = useState<PaymentInvoice | null>(null);
 
   // Aba ativa: 'AVAILABLE' | 'PENDING' | 'INVOICES' | 'EXCHANGED'
   const [activeTab, setActiveTab] = useState<'AVAILABLE' | 'PENDING' | 'INVOICES' | 'EXCHANGED'>('AVAILABLE');
@@ -609,14 +612,12 @@ export function UserDashboard() {
                           </td>
                           <td className="p-3 text-center">
                             {isPending && inv.nextUrl ? (
-                              <a
-                                href={inv.nextUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="neo-btn bg-neo-yellow hover:bg-neo-yellow-hover text-neo-dark py-1.5 px-3 text-[11px] inline-flex items-center gap-1 no-underline"
+                              <button
+                                onClick={() => setActivePaymentInvoice(inv)}
+                                className="neo-btn bg-neo-yellow hover:bg-neo-yellow-hover text-neo-dark py-1.5 px-3 text-[11px] inline-flex items-center gap-1.5 font-bold cursor-pointer"
                               >
-                                Pagar Pix/GRU <ExternalLink className="w-3 h-3" />
-                              </a>
+                                <CreditCard className="w-3 h-3" /> Pagar via PagTesouro
+                              </button>
                             ) : isCompleted ? (
                               <button
                                 onClick={() => setSelectedInvoiceForReceipt(inv)}
@@ -1082,6 +1083,27 @@ export function UserDashboard() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* MODAL COM IFRAME OFICIAL DO PAGTESOURO PARA FATURAS PENDENTES */}
+      {activePaymentInvoice && (activePaymentInvoice.nextUrl || activePaymentInvoice.proximaUrl) && (
+        <PagTesouroPaymentModal
+          isOpen={!!activePaymentInvoice}
+          onClose={() => {
+            setActivePaymentInvoice(null);
+            fetchDashboardData();
+          }}
+          paymentUrl={activePaymentInvoice.nextUrl || activePaymentInvoice.proximaUrl}
+          paymentId={activePaymentInvoice.id}
+          amount={activePaymentInvoice.amount}
+          contributorCpf={activePaymentInvoice.contributorCpfCnpj}
+          isAuthenticated={true}
+          onSuccessRedirect={() => {
+            setActivePaymentInvoice(null);
+            fetchDashboardData();
+            setActiveTab('AVAILABLE');
+          }}
+        />
       )}
 
     </Layout>
