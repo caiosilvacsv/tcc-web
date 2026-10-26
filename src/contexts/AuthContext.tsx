@@ -1,156 +1,160 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { api } from '../services/api';
 
-interface UserClaims {
-  sub: string; // Geralmente o e-mail ou identificador do usuário
-  role?: 'USER' | 'ADMIN'; // Claim do papel mapeado de forma estrita com o backend
-  roles?: string[]; // Algumas implementações enviam como array de authorities
-  iss?: string;
-  exp?: number;
+/**
+ * DTO de sessão mínima retornado por POST /auth/login e POST /auth/register
+ * conforme Princípio da Minimização da LGPD (Art. 6º, III) — sem token JWT e sem CPF/email.
+ */
+export interface AuthSession {
+  name: string;
+  lastName: string;
+  role: 'USER' | 'ADMIN';
 }
 
-interface User {
-  email: string;
+/**
+ * Perfil completo do titular retornado exclusivamente por GET /auth/me
+ * autenticado via Cookie seguro HttpOnly ("accessToken").
+ */
+export interface UserProfile {
+  id?: string;
+  name: string;
+  lastName: string;
+  email?: string;
+  cpf?: string;
   role: 'USER' | 'ADMIN';
-  name?: string;
+  active?: boolean;
 }
 
 interface AuthContextType {
-  token: string | null;
-  user: User | null;
+  user: UserProfile | null;
   isAuthenticated: boolean;
-  login: (token: string) => void;
-  logout: () => void;
+  isLoading: boolean;
+  login: (session: AuthSession) => Promise<void>;
+  logout: () => Promise<void>;
+  refreshProfile: () => Promise<UserProfile | null>;
 }
+
+const SESSION_STORAGE_KEY = 'auth-session';
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [token, setToken] = useState<string | null>(null);
-  const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  // Decodifica um token JWT nativamente, extraindo as claims em formato de objeto
-  const decodeJwt = (jwtToken: string): UserClaims | null => {
+  const [user, setUser] = useState<UserProfile | null>(() => {
     try {
-      const base64Url = jwtToken.split('.')[1];
-      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-      const jsonPayload = decodeURIComponent(
-        window
-          .atob(base64)
-          .split('')
-          .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-          .join('')
-      );
-      return JSON.parse(jsonPayload);
-    } catch (e) {
-      console.error('Falha ao decodificar o token JWT nativamente', e);
+      // Remove qualquer vestígio legado de token em localStorage
+      localStorage.removeItem('auth-data');
+      const cached = sessionStorage.getItem(SESSION_STORAGE_KEY);
+      if (cached) {
+        return JSON.parse(cached) as UserProfile;
+      }
+    } catch {
+      // Ignora erro de parse
+    }
+    return null;
+  });
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  const normalizeRole = (rawRole?: string): 'USER' | 'ADMIN' => {
+    if (rawRole === 'ADMIN' || rawRole === 'ROLE_ADMIN') {
+      return 'ADMIN';
+    }
+    return 'USER';
+  };
+
+  /**
+   * Consulta GET /auth/me (autenticado pelo Cookie HttpOnly) para sincronizar
+   * os dados cadastrais completos do titular apenas em memória.
+   */
+  const refreshProfile = useCallback(async (): Promise<UserProfile | null> => {
+    try {
+      const me = await api<UserProfile>('/auth/me', {
+        method: 'GET',
+        skipAuthRedirect: true,
+      });
+      if (me && me.name) {
+        const normalized: UserProfile = {
+          id: me.id,
+          name: me.name,
+          lastName: me.lastName || '',
+          email: me.email,
+          cpf: me.cpf,
+          role: normalizeRole(me.role),
+          active: me.active,
+        };
+        setUser(normalized);
+        // Em sessionStorage persiste apenas o AuthSessionDTO mínimo (sem CPF/email), respeitando a LGPD
+        const minimalSession: AuthSession = {
+          name: normalized.name,
+          lastName: normalized.lastName,
+          role: normalized.role,
+        };
+        sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(minimalSession));
+        return normalized;
+      }
+      return null;
+    } catch {
+      setUser(null);
+      sessionStorage.removeItem(SESSION_STORAGE_KEY);
       return null;
     }
-  };
-
-  const login = (newToken: string) => {
-    setToken(newToken);
-    
-    // Extrai os dados do usuário a partir das claims do JWT recebido
-    const claims = decodeJwt(newToken);
-    let userRole: 'USER' | 'ADMIN' = 'USER';
-    let userEmail = '';
-
-    if (claims) {
-      userEmail = claims.sub;
-      const rawRole = claims.role || (claims.roles && claims.roles[0]);
-      
-      if (rawRole === 'ROLE_ADMIN' || rawRole === 'ADMIN') {
-        userRole = 'ADMIN';
-      }
-    }
-
-    const userData: User = {
-      email: userEmail,
-      role: userRole,
-      name: (claims as any).name || (claims as any).nome,
-    };
-
-    setUser(userData);
-    localStorage.setItem(
-      'auth-data',
-      JSON.stringify({ token: newToken })
-    );
-  };
-
-  const logout = () => {
-    setToken(null);
-    setUser(null);
-    localStorage.removeItem('auth-data');
-    window.location.href = '/login';
-  };
-
-  // 1. Carrega a sessão inicial do localStorage ao inicializar o app e valida a expiração preventiva
-  useEffect(() => {
-    const savedAuth = localStorage.getItem('auth-data');
-    if (savedAuth) {
-      try {
-        const parsed = JSON.parse(savedAuth);
-        if (parsed?.token) {
-          const claims = decodeJwt(parsed.token);
-          if (claims) {
-            // Verifica preventivamente se o token recuperado do localStorage já está expirado
-            if (claims.exp && claims.exp * 1000 < Date.now()) {
-              console.warn('Sessão acadêmica expirada detectada na inicialização do frontend. Limpando credenciais.');
-              localStorage.removeItem('auth-data');
-            } else {
-              setToken(parsed.token);
-              
-              // Tenta obter a role do formato de string ou do primeiro elemento do array de authorities/roles
-              let userRole: 'USER' | 'ADMIN' = 'USER';
-              const rawRole = claims.role || (claims.roles && claims.roles[0]);
-              
-              if (rawRole === 'ROLE_ADMIN' || rawRole === 'ADMIN') {
-                userRole = 'ADMIN';
-              }
-
-              setUser({
-                email: claims.sub,
-                role: userRole,
-                name: (claims as any).name || (claims as any).nome,
-              });
-            }
-          }
-        }
-      } catch (e) {
-        console.error('Erro ao ler autenticação do localStorage', e);
-      }
-    }
-    setIsLoading(false);
   }, []);
 
-  // 2. Efeito periódico em background que monitora a expiração do token em tempo real (a cada 10s)
-  useEffect(() => {
-    if (!token) return;
+  /**
+   * Registra a sessão mínima recebida no login/cadastro e hidrata o perfil via cookie HttpOnly.
+   */
+  const login = async (session: AuthSession) => {
+    const minimalUser: UserProfile = {
+      name: session.name,
+      lastName: session.lastName || '',
+      role: normalizeRole(session.role),
+    };
+    setUser(minimalUser);
+    sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(minimalUser));
 
-    const checkTokenExpiration = () => {
-      const claims = decodeJwt(token);
-      if (claims && claims.exp && claims.exp * 1000 < Date.now()) {
-        console.warn('Token JWT expirado em background. Redirecionando para login.');
-        logout();
+    // Hidrata dados completos (id, email, cpf) via cookie HttpOnly em background
+    await refreshProfile();
+  };
+
+  /**
+   * Encerra a sessão no servidor invalidando o cookie HttpOnly ("accessToken") via POST /auth/logout.
+   */
+  const logout = async () => {
+    try {
+      await api('/auth/logout', { method: 'POST', skipAuthRedirect: true });
+    } catch {
+      // Ignora falha de rede no logout e limpa estado local mesmo assim
+    } finally {
+      setUser(null);
+      sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      localStorage.removeItem('auth-data');
+      window.location.href = '/login';
+    }
+  };
+
+  // Hidrata e valida a sessão HttpOnly ao inicializar a aplicação
+  useEffect(() => {
+    let isMounted = true;
+    const initSession = async () => {
+      await refreshProfile();
+      if (isMounted) {
+        setIsLoading(false);
       }
     };
-
-    // Valida imediatamente ao ativar ou restaurar o token
-    checkTokenExpiration();
-
-    const interval = setInterval(checkTokenExpiration, 10000);
-    return () => clearInterval(interval);
-  }, [token]);
+    initSession();
+    return () => {
+      isMounted = false;
+    };
+  }, [refreshProfile]);
 
   return (
     <AuthContext.Provider
       value={{
-        token,
         user,
-        isAuthenticated: !!token,
+        isAuthenticated: !!user,
+        isLoading,
         login,
         logout,
+        refreshProfile,
       }}
     >
       {!isLoading && children}

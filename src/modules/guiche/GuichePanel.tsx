@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { api } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
+import { useSystemConfig } from '../../contexts/SystemConfigContext';
 import { useToast } from '../../contexts/ToastContext';
 import { 
   Search, 
@@ -8,12 +9,9 @@ import {
   AlertTriangle, 
   UserCheck, 
   Package, 
-  Sparkles, 
   CheckCheck,
-  Building,
-  User,
-  Clock,
-  ArrowRight
+  QrCode,
+  CreditCard
 } from 'lucide-react';
 import { isValidCpf, formatCpf, cleanCpf } from '../../utils/cpf';
 import { useNavigate } from 'react-router-dom';
@@ -33,6 +31,7 @@ interface TicketReadyResponseDTO {
 
 interface ProductItem {
   id: string;
+  orderId?: string;
   productName: string;
   paidAt: string;
   quantity?: number;
@@ -49,10 +48,18 @@ interface StudentExchangeData {
 
 export function GuichePanel() {
   const { user } = useAuth();
+  const { getConfig } = useSystemConfig();
   const toast = useToast();
   const navigate = useNavigate();
 
+  const guicheSubtitle = getConfig(
+    'institution.guiche_subtitle',
+    'Campus Salinas • Refeitório Universitário & Biblioteca Central'
+  );
+
+  const [searchMode, setSearchMode] = useState<'CPF' | 'ITEM_ID'>('CPF');
   const [cpfInput, setCpfInput] = useState('');
+  const [itemIdInput, setItemIdInput] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [studentData, setStudentData] = useState<StudentExchangeData | null>(null);
   const [isSearching, setIsSearching] = useState(false);
@@ -78,55 +85,91 @@ export function GuichePanel() {
     }
   };
 
-  // Preenchimento rápido para demonstração do TCC
-  const handleQuickFillCpf = (testCpf: string) => {
-    setCpfInput(formatCpf(testCpf));
-    setErrorMessage('');
-  };
-
-  // Consulta produtos adquiridos pelo CPF via rota oficial /orders/tickets?cpf=...
+  // Consulta produtos adquiridos pelo CPF (/orders/tickets?cpf=...) ou por UUID individual (/orders/items/{itemId})
   const handleSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const cpf = cleanCpf(cpfInput);
-    if (cpf.length !== 11) {
-      setErrorMessage('Digite os 11 dígitos do CPF para consultar.');
-      return;
-    }
-
     setErrorMessage('');
-    setIsSearching(true);
-    try {
-      // Rota oficial do backend: GET /orders/tickets?cpf=00000000000
-      const tickets = await api<TicketReadyResponseDTO[]>(`/orders/tickets?cpf=${cpf}`);
 
-      if (!tickets || tickets.length === 0) {
-        setStudentData(null);
-        setErrorMessage('Nenhum tíquete em aberto localizado para este CPF.');
-        toast.warning('Nenhum tíquete pago pendente encontrado.');
+    if (searchMode === 'CPF') {
+      const cpf = cleanCpf(cpfInput);
+      if (cpf.length !== 11) {
+        setErrorMessage('Digite os 11 dígitos do CPF para consultar.');
+        return;
+      }
+      if (!isValidCpf(cpf)) {
+        setErrorMessage('CPF informado possui dígitos verificadores inválidos.');
         return;
       }
 
-      const firstTicket = tickets[0];
-      setStudentData({
-        name: firstTicket.buyerName || 'Contribuinte / Aluno',
-        cpf: firstTicket.buyerCpf || cpf,
-        buyerType: firstTicket.buyerType,
-        items: tickets.map(t => ({
-          id: t.itemId,
-          productName: t.productTitle,
-          quantity: t.quantity,
-          totalAmount: t.totalAmount,
-          paidAt: t.paidAt,
-          status: 'PAID'
-        }))
-      });
-      toast.success(`${tickets.length} tíquete(s) de ${firstTicket.buyerName || 'Contribuinte'} localizado(s)!`);
-    } catch (err: any) {
-      setStudentData(null);
-      setErrorMessage(err.message || 'Nenhum produto em aberto localizado para este CPF.');
-      toast.warning('Nenhum tíquete pago pendente encontrado.');
-    } finally {
-      setIsSearching(false);
+      setIsSearching(true);
+      try {
+        const tickets = await api<TicketReadyResponseDTO[]>(`/orders/tickets?cpf=${cpf}`);
+
+        if (!tickets || tickets.length === 0) {
+          setStudentData(null);
+          setErrorMessage('Nenhum tíquete pago pendente localizado para este CPF.');
+          toast.warning('Nenhum tíquete pago pendente encontrado.');
+          return;
+        }
+
+        const firstTicket = tickets[0];
+        setStudentData({
+          name: firstTicket.buyerName || 'Contribuinte / Aluno',
+          cpf: firstTicket.buyerCpf || cpf,
+          buyerType: firstTicket.buyerType,
+          items: tickets.map(t => ({
+            id: t.itemId,
+            orderId: t.orderId,
+            productName: t.productTitle,
+            quantity: t.quantity,
+            totalAmount: t.totalAmount,
+            paidAt: t.paidAt,
+            status: 'PAID'
+          }))
+        });
+        toast.success(`${tickets.length} tíquete(s) de ${firstTicket.buyerName || 'Contribuinte'} localizado(s)!`);
+      } catch (err: any) {
+        setStudentData(null);
+        setErrorMessage(err.message || 'Nenhum produto em aberto localizado para este CPF.');
+        toast.warning('Nenhum tíquete pago pendente encontrado.');
+      } finally {
+        setIsSearching(false);
+      }
+    } else {
+      const trimmedId = itemIdInput.trim();
+      const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+      if (!uuidRegex.test(trimmedId)) {
+        setErrorMessage('Informe um código UUID válido de tíquete (ex: 550e8400-e29b-41d4-a716-446655440000).');
+        return;
+      }
+
+      setIsSearching(true);
+      try {
+        const ticket = await api<TicketReadyResponseDTO>(`/orders/items/${trimmedId}`);
+        setStudentData({
+          name: ticket.buyerName || 'Contribuinte / Aluno',
+          cpf: ticket.buyerCpf || '',
+          buyerType: ticket.buyerType,
+          items: [
+            {
+              id: ticket.itemId,
+              orderId: ticket.orderId,
+              productName: ticket.productTitle,
+              quantity: ticket.quantity,
+              totalAmount: ticket.totalAmount,
+              paidAt: ticket.paidAt,
+              status: 'PAID'
+            }
+          ]
+        });
+        toast.success(`Tíquete #${ticket.itemId.slice(0, 8)} validado para entrega!`);
+      } catch (err: any) {
+        setStudentData(null);
+        setErrorMessage(err.message || 'Tíquete não encontrado ou não está apto para retirada.');
+        toast.warning('Tíquete inválido ou já retirado.');
+      } finally {
+        setIsSearching(false);
+      }
     }
   };
 
@@ -184,7 +227,6 @@ export function GuichePanel() {
       onConfirm: async () => {
         setIsBatchExchanging(true);
         try {
-          // Tenta endpoint de lote /orders/items/exchange
           await api<any>('/orders/items/exchange', {
             method: 'PUT',
             body: JSON.stringify({ itemIds: paidItems.map(i => i.id) })
@@ -196,18 +238,8 @@ export function GuichePanel() {
           });
 
           toast.success(`Todos os ${paidItems.length} tíquetes foram baixados com sucesso!`);
-        } catch {
-          // Fallback sequencial se o endpoint de lote não estiver ativado
-          for (const item of paidItems) {
-            try {
-              await api<void>(`/orders/items/${item.id}/exchange`, { method: 'PUT' });
-            } catch {}
-          }
-          setStudentData({
-            ...studentData,
-            items: []
-          });
-          toast.success('Entrega em lote concluída com sucesso!');
+        } catch (err: any) {
+          toast.error(err.message || 'Falha ao processar entrega em lote no guichê.');
         } finally {
           setIsBatchExchanging(false);
         }
@@ -231,77 +263,104 @@ export function GuichePanel() {
                   Terminal de Atendimento & Guichê POS
                 </h1>
                 <span className="neo-badge bg-emerald-100 text-emerald-950 border-emerald-950">
-                  Operador Ativo
+                  Operador: {[user?.name, user?.lastName].filter(Boolean).join(' ') || 'Admin'}
                 </span>
               </div>
               <p className="text-xs font-mono text-slate-500 mt-0.5">
-                Campus Salinas • Refeitório & Biblioteca Central
+                {guicheSubtitle}
               </p>
             </div>
           </div>
 
           <button
-            onClick={() => navigate('/admin/products')}
+            onClick={() => navigate('/admin')}
             className="neo-btn bg-white hover:bg-slate-100 text-xs py-2.5 px-4 flex items-center gap-1.5"
           >
             <Package className="w-4 h-4 text-neo-brand" />
-            <span>Gerenciar Catálogo</span>
+            <span>Central Admin</span>
           </button>
         </div>
 
-        {/* ÁREA DE CONSULTA POR CPF */}
+        {/* ÁREA DE CONSULTA POR CPF OU UUID DO TÍQUETE */}
         <div className="neo-card p-6 bg-white border-3 space-y-4">
-          <div>
-            <h2 className="font-heading font-bold text-base uppercase text-neo-dark flex items-center gap-2">
-              <Search className="w-5 h-5 text-neo-accent" /> Consulta Rápida de Beneficiário
-            </h2>
-            <p className="text-xs text-slate-600 font-sans mt-0.5">
-              Digite ou leia o código de barras/QR Code do CPF do estudante para autorizar a liberação imediata da refeição.
-            </p>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="font-heading font-bold text-base uppercase text-neo-dark flex items-center gap-2">
+                <Search className="w-5 h-5 text-neo-accent" /> Validação de Tíquetes para Retirada
+              </h2>
+              <p className="text-xs text-slate-600 font-sans mt-0.5">
+                Consulte todos os tíquetes pagos pelo CPF do beneficiário ou valide um tíquete individual pelo código UUID/QR Code.
+              </p>
+            </div>
+
+            <div className="flex border-2 border-neo-dark bg-slate-100 p-0.5 self-start">
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchMode('CPF');
+                  setErrorMessage('');
+                }}
+                className={`px-3 py-1.5 text-xs font-heading font-bold uppercase flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  searchMode === 'CPF' ? 'bg-neo-dark text-white' : 'text-neo-dark hover:bg-white'
+                }`}
+              >
+                <CreditCard className="w-3.5 h-3.5" /> Por CPF
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchMode('ITEM_ID');
+                  setErrorMessage('');
+                }}
+                className={`px-3 py-1.5 text-xs font-heading font-bold uppercase flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  searchMode === 'ITEM_ID' ? 'bg-neo-dark text-white' : 'text-neo-dark hover:bg-white'
+                }`}
+              >
+                <QrCode className="w-3.5 h-3.5" /> Por ID do Tíquete
+              </button>
+            </div>
           </div>
 
           <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
-              <input
-                type="text"
-                value={cpfInput}
-                onChange={handleCpfChange}
-                maxLength={14}
-                placeholder="000.000.000-00"
-                className="neo-input neo-input-icon font-mono text-base font-bold tracking-wider"
-                autoFocus
-              />
+              {searchMode === 'CPF' ? (
+                <input
+                  type="text"
+                  value={cpfInput}
+                  onChange={handleCpfChange}
+                  maxLength={14}
+                  placeholder="000.000.000-00"
+                  className="neo-input neo-input-icon font-mono text-base font-bold tracking-wider"
+                  autoFocus
+                />
+              ) : (
+                <input
+                  type="text"
+                  value={itemIdInput}
+                  onChange={(e) => {
+                    setItemIdInput(e.target.value);
+                    setErrorMessage('');
+                  }}
+                  placeholder="UUID do Item (ex: 550e8400-e29b-41d4-a716-446655440000)"
+                  className="neo-input neo-input-icon font-mono text-sm font-bold tracking-wide"
+                  autoFocus
+                />
+              )}
               <Search className="w-5 h-5 absolute left-3.5 top-3.5 text-slate-400" />
             </div>
 
             <button
               type="submit"
               disabled={isSearching}
-              className="neo-btn-primary py-3 px-8 text-xs tracking-wider"
+              className="neo-btn-primary py-3 px-8 text-xs tracking-wider cursor-pointer"
             >
-              {isSearching ? 'Localizando...' : 'Consultar CPF'}
+              {isSearching
+                ? 'Localizando...'
+                : searchMode === 'CPF'
+                  ? 'Consultar CPF'
+                  : 'Validar Tíquete'}
             </button>
           </form>
-
-          {/* Atalho para apresentação rápida */}
-          <div className="flex items-center gap-2 pt-1 text-[11px] font-mono text-slate-500">
-            <span>Atalhos de Teste:</span>
-            <button
-              type="button"
-              onClick={() => handleQuickFillCpf('12345678900')}
-              className="underline hover:text-neo-brand cursor-pointer"
-            >
-              123.456.789-00
-            </button>
-            <span>•</span>
-            <button
-              type="button"
-              onClick={() => handleQuickFillCpf('12345678911')}
-              className="underline hover:text-neo-brand cursor-pointer"
-            >
-              123.456.789-11
-            </button>
-          </div>
 
           {errorMessage && (
             <div className="p-3 bg-rose-50 border-2 border-rose-950 text-rose-950 text-xs font-mono flex items-center gap-2">
@@ -335,7 +394,9 @@ export function GuichePanel() {
                     )}
                   </div>
                   <h3 className="font-heading font-bold text-lg text-neo-dark leading-tight">{studentData.name}</h3>
-                  <span className="text-xs font-mono text-slate-600">CPF: {formatCpf(studentData.cpf)}</span>
+                  {studentData.cpf && (
+                    <span className="text-xs font-mono text-slate-600">CPF: {formatCpf(studentData.cpf)}</span>
+                  )}
                 </div>
               </div>
 
@@ -343,7 +404,7 @@ export function GuichePanel() {
                 <button
                   onClick={handleBatchExchange}
                   disabled={isBatchExchanging}
-                  className="neo-btn bg-neo-yellow hover:bg-neo-yellow-hover text-neo-dark py-2 px-4 text-xs flex items-center gap-1.5 shadow-neo-xs"
+                  className="neo-btn bg-neo-yellow hover:bg-neo-yellow-hover text-neo-dark py-2 px-4 text-xs flex items-center gap-1.5 shadow-neo-xs cursor-pointer"
                 >
                   <CheckCheck className="w-4 h-4" /> Entregar Todos em Lote
                 </button>
@@ -376,7 +437,7 @@ export function GuichePanel() {
                   <table className="w-full border-collapse">
                     <thead>
                       <tr className="border-b-3 border-neo-dark text-left bg-slate-100 text-xs font-heading font-bold uppercase">
-                        <th className="p-3">Produto / Refeição</th>
+                        <th className="p-3">Código / Produto</th>
                         <th className="p-3">Data da Quitação</th>
                         <th className="p-3 text-right">Ação Operacional</th>
                       </tr>
@@ -387,8 +448,8 @@ export function GuichePanel() {
                         .map((item) => (
                           <tr key={item.id} className="border-b border-slate-200 hover:bg-emerald-50/50 transition-colors">
                             <td className="p-3">
-                              <span className="neo-badge bg-neo-yellow text-neo-dark border-neo-dark mr-2">
-                                Tíquete
+                              <span className="neo-badge bg-neo-yellow text-neo-dark border-neo-dark mr-2 font-mono">
+                                #{item.id.slice(0, 8)}
                               </span>
                               <span className="font-bold text-sm text-neo-dark">{item.productName}</span>
                               {item.quantity && item.quantity > 1 && (
@@ -398,13 +459,13 @@ export function GuichePanel() {
                               )}
                             </td>
                             <td className="p-3 font-mono text-xs text-slate-600">
-                              {new Date(item.paidAt).toLocaleString('pt-BR')}
+                              {item.paidAt ? new Date(item.paidAt).toLocaleString('pt-BR') : 'Quitado'}
                             </td>
                             <td className="p-3 text-right">
                               <button
                                 onClick={() => handleExchange(item.id, item.productName)}
                                 disabled={exchangingId !== null || isBatchExchanging}
-                                className="neo-btn-primary py-2 px-4 text-xs inline-flex items-center gap-1.5 shadow-neo-xs"
+                                className="neo-btn-primary py-2 px-4 text-xs inline-flex items-center gap-1.5 shadow-neo-xs cursor-pointer"
                               >
                                 <CheckCircle2 className="w-4 h-4" />
                                 <span>{exchangingId === item.id ? 'Confirmando...' : 'Confirmar Entrega'}</span>

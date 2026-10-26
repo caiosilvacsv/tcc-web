@@ -1,17 +1,27 @@
 import React, { useState } from 'react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth, AuthSession } from '../../contexts/AuthContext';
+import { useSystemConfig } from '../../contexts/SystemConfigContext';
 import { useToast } from '../../contexts/ToastContext';
 import { api } from '../../services/api';
 import { useNavigate, Link } from 'react-router-dom';
-import { LogIn, Mail, Lock, AlertTriangle, Eye, EyeOff, Building2, Sparkles } from 'lucide-react';
+import {
+  LogIn,
+  Mail,
+  Lock,
+  AlertTriangle,
+  Eye,
+  EyeOff,
+  Building2,
+  KeyRound,
+  X,
+  CheckCircle2,
+  ShieldCheck,
+} from 'lucide-react';
 import { Layout } from '../../components/layout/Layout';
-
-interface LoginResponse {
-  token: string;
-}
 
 export function LoginPanel() {
   const { login } = useAuth();
+  const { getConfig } = useSystemConfig();
   const toast = useToast();
   const navigate = useNavigate();
 
@@ -21,13 +31,14 @@ export function LoginPanel() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Preenchimento de credenciais para facilitar apresentação de TCC
-  const fillDemoCredentials = (demoEmail: string, demoPass: string) => {
-    setEmail(demoEmail);
-    setPassword(demoPass);
-    setError(null);
-    toast.info(`Credenciais de teste preenchidas: ${demoEmail}`);
-  };
+  // Estados do Modal de Recuperação de Senha (LGPD Anti-Enumeração)
+  const [isForgotModalOpen, setIsForgotModalOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [isSendingReset, setIsSendingReset] = useState(false);
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
+
+  const institutionName = getConfig('institution.name', 'IFNMG • Campus Salinas');
+  const resetExpirationMinutes = getConfig('auth.reset_token_expiration_minutes', '15');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,25 +51,22 @@ export function LoginPanel() {
     setIsLoading(true);
 
     try {
-      const data = await api<LoginResponse>('/auth/login', {
+      // O backend define o Cookie seguro HttpOnly ("accessToken") via Set-Cookie
+      // e retorna apenas o AuthSessionDTO ({ name, lastName, role }) sem expor JWT ou CPF.
+      const session = await api<AuthSession>('/auth/login', {
         method: 'POST',
+        skipAuthRedirect: true,
         body: JSON.stringify({
-          email,
+          email: email.trim(),
           password,
         }),
       });
 
-      login(data.token);
-      toast.success('Autenticação realizada com sucesso!');
+      await login(session);
+      toast.success(`Bem-vindo(a), ${session.name}! Sessão segura HttpOnly iniciada.`);
 
-      // Decodificação rápida de role para direcionamento correto
-      const base64Url = data.token.split('.')[1];
-      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-      const payload = JSON.parse(window.atob(base64));
-      const rawRole = payload.role || (payload.roles && payload.roles[0]);
-
-      if (rawRole === 'ROLE_ADMIN' || rawRole === 'ADMIN') {
-        navigate('/guiche');
+      if (session.role === 'ADMIN' || (session.role as string) === 'ROLE_ADMIN') {
+        navigate('/admin');
       } else {
         navigate('/dashboard');
       }
@@ -70,11 +78,37 @@ export function LoginPanel() {
     }
   };
 
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotEmail.trim()) {
+      toast.error('Informe seu e-mail institucional.');
+      return;
+    }
+
+    setIsSendingReset(true);
+    setResetMessage(null);
+    try {
+      const res = await api<{ message: string }>('/auth/forgot-password', {
+        method: 'POST',
+        skipAuthRedirect: true,
+        body: JSON.stringify({ email: forgotEmail.trim() }),
+      });
+      setResetMessage(
+        res?.message ||
+          'Se o e-mail informado estiver cadastrado em nosso sistema, as instruções de recuperação de senha foram enviadas.'
+      );
+      toast.success('Solicitação processada com segurança!');
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao solicitar redefinição de senha.');
+    } finally {
+      setIsSendingReset(false);
+    }
+  };
+
   return (
     <Layout hideFooter={true}>
-      <div className="min-h-[80vh] flex items-center justify-center py-10 animate-fade-in">
+      <div className="min-h-[82vh] flex items-center justify-center py-10 animate-fade-in">
         <div className="w-full max-w-md neo-card p-8 bg-white border-3 shadow-neo-lg relative">
-          
           {/* Cabeçalho de Autenticação */}
           <div className="text-center mb-6">
             <div className="inline-flex p-3 border-3 border-neo-dark bg-neo-yellow mb-3 shadow-neo-xs">
@@ -84,8 +118,12 @@ export function LoginPanel() {
               Acesso Acadêmico
             </h1>
             <p className="text-xs text-slate-600 font-sans mt-1">
-              IFNMG Campus Salinas • Arrecadação Digital
+              {institutionName} • Arrecadação Digital STN
             </p>
+            <div className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-emerald-50 border border-neo-dark text-[10px] font-mono font-bold text-emerald-900">
+              <ShieldCheck className="w-3.5 h-3.5 text-neo-brand" />
+              Sessão Protegida por Cookie HttpOnly & LGPD
+            </div>
           </div>
 
           {/* Notificação de Erro */}
@@ -118,9 +156,22 @@ export function LoginPanel() {
             </div>
 
             <div>
-              <label className="block text-[11px] font-heading font-bold uppercase tracking-wider text-slate-700 mb-1">
-                Sua Senha
-              </label>
+              <div className="flex justify-between items-center mb-1">
+                <label className="block text-[11px] font-heading font-bold uppercase tracking-wider text-slate-700">
+                  Sua Senha
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForgotEmail(email);
+                    setResetMessage(null);
+                    setIsForgotModalOpen(true);
+                  }}
+                  className="text-[11px] font-mono font-bold text-neo-brand hover:underline cursor-pointer"
+                >
+                  Esqueceu a senha?
+                </button>
+              </div>
               <div className="relative">
                 <input
                   type={showPassword ? 'text' : 'password'}
@@ -146,44 +197,21 @@ export function LoginPanel() {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full neo-btn-primary py-3 font-heading font-bold uppercase tracking-wider flex items-center justify-center gap-2 mt-4 text-xs shadow-neo-sm"
+              className="w-full neo-btn-primary py-3 font-heading font-bold uppercase tracking-wider flex items-center justify-center gap-2 mt-4 text-xs shadow-neo-sm cursor-pointer"
             >
               {isLoading ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>Autenticando...</span>
+                  <span>Autenticando Sessão Segura...</span>
                 </>
               ) : (
                 <>
                   <LogIn className="w-4 h-4" />
-                  <span>Acessar Carteira</span>
+                  <span>Acessar Portal</span>
                 </>
               )}
             </button>
           </form>
-
-          {/* Atalhos de Demonstração para Banca de TCC */}
-          <div className="mt-6 p-3 bg-slate-50 border-2 border-neo-dark space-y-2 text-left">
-            <span className="text-[10px] font-mono uppercase font-bold text-slate-500 flex items-center gap-1">
-              <Sparkles className="w-3.5 h-3.5 text-neo-yellow" /> Demonstração Rápida (TCC):
-            </span>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => fillDemoCredentials('aluno@ifnmg.edu.br', 'senha123')}
-                className="p-1.5 bg-white border border-neo-dark text-[10px] font-mono hover:bg-slate-100 cursor-pointer text-slate-700"
-              >
-                👤 Aluno Demo
-              </button>
-              <button
-                type="button"
-                onClick={() => fillDemoCredentials('admin@ifnmg.edu.br', 'admin123')}
-                className="p-1.5 bg-white border border-neo-dark text-[10px] font-mono hover:bg-slate-100 cursor-pointer text-slate-700"
-              >
-                🛡️ Operador Admin
-              </button>
-            </div>
-          </div>
 
           {/* Links Auxiliares */}
           <div className="mt-6 pt-5 border-t-2 border-dashed border-slate-300 text-center text-xs space-y-2">
@@ -194,15 +222,116 @@ export function LoginPanel() {
               </Link>
             </p>
             <p className="text-slate-500 text-[11px]">
-              Deseja comprar como visitante anônimo?{' '}
+              Deseja comprar ou consultar tíquetes como visitante?{' '}
               <Link to="/store" className="font-bold text-neo-accent hover:underline">
                 Acessar Vitrine Pública
               </Link>
             </p>
           </div>
-
         </div>
       </div>
+
+      {/* MODAL DE RECUPERAÇÃO DE SENHA (POST /auth/forgot-password) */}
+      {isForgotModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
+          <div className="w-full max-w-md neo-card bg-white border-3 border-neo-dark shadow-neo-lg overflow-hidden">
+            <div className="p-4 bg-neo-yellow border-b-3 border-neo-dark flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-5 h-5 text-neo-dark" />
+                <h2 className="font-heading font-bold text-sm uppercase text-neo-dark">
+                  Recuperação de Senha Institucional
+                </h2>
+              </div>
+              <button
+                onClick={() => setIsForgotModalOpen(false)}
+                className="p-1 border-2 border-neo-dark bg-white hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {resetMessage ? (
+                <div className="space-y-4">
+                  <div className="p-4 bg-emerald-50 border-2 border-neo-dark text-emerald-950 text-xs space-y-2">
+                    <div className="flex items-center gap-2 font-heading font-bold uppercase text-emerald-900">
+                      <CheckCircle2 className="w-5 h-5 text-neo-brand flex-shrink-0" />
+                      <span>Solicitação Registrada (Proteção LGPD)</span>
+                    </div>
+                    <p className="font-sans leading-relaxed">{resetMessage}</p>
+                    <p className="text-[11px] font-mono text-slate-600 pt-1">
+                      O token de uso único possui validade de {resetExpirationMinutes} minutos. Caso
+                      já possua o token, você também pode informar diretamente na tela de
+                      redefinição.
+                    </p>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsForgotModalOpen(false);
+                        navigate('/reset-password');
+                      }}
+                      className="flex-1 neo-btn-primary py-2.5 text-xs font-heading font-bold uppercase cursor-pointer"
+                    >
+                      Já tenho o Token
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsForgotModalOpen(false)}
+                      className="neo-btn bg-white py-2.5 px-4 text-xs cursor-pointer"
+                    >
+                      Fechar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={handleForgotPassword} className="space-y-4">
+                  <p className="text-xs text-slate-600 font-sans leading-relaxed">
+                    Informe seu e-mail acadêmico cadastrado. Enviaremos um link seguro com token de
+                    uso único (válido por {resetExpirationMinutes} minutos) para redefinir sua
+                    senha.
+                  </p>
+
+                  <div>
+                    <label className="block text-[11px] font-heading font-bold uppercase text-slate-700 mb-1">
+                      E-mail Cadastrado *
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      placeholder="seu.email@aluno.ifnmg.edu.br"
+                      className="neo-input text-xs"
+                      disabled={isSendingReset}
+                      autoFocus
+                    />
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsForgotModalOpen(false)}
+                      className="neo-btn bg-white py-2.5 px-4 text-xs cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSendingReset}
+                      className="neo-btn-primary py-2.5 px-5 text-xs font-heading font-bold uppercase cursor-pointer"
+                    >
+                      {isSendingReset ? 'Enviando...' : 'Enviar Link de Recuperação'}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }

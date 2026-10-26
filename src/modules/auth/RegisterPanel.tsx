@@ -1,15 +1,11 @@
 import React, { useState } from 'react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth, AuthSession } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import { api } from '../../services/api';
 import { useNavigate, Link } from 'react-router-dom';
-import { UserPlus, User, Mail, CreditCard, Lock, AlertTriangle, ShieldCheck, Eye, EyeOff, Building2 } from 'lucide-react';
+import { UserPlus, User, Mail, CreditCard, Lock, AlertTriangle, ShieldCheck, Eye, EyeOff } from 'lucide-react';
 import { isValidCpf, formatCpf, cleanCpf } from '../../utils/cpf';
 import { Layout } from '../../components/layout/Layout';
-
-interface RegisterResponse {
-  token: string;
-}
 
 export function RegisterPanel() {
   const { login } = useAuth();
@@ -22,7 +18,7 @@ export function RegisterPanel() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  
+
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -38,22 +34,15 @@ export function RegisterPanel() {
       } else {
         setError(null);
       }
-    } else {
-      if (error && error.includes('CPF')) {
-        setError(null);
-      }
+    } else if (error && error.includes('CPF')) {
+      setError(null);
     }
-  };
-
-  const handleQuickCpf = (demoCpf: string) => {
-    setCpf(formatCpf(demoCpf));
-    setError(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!firstName || !lastName || !cpf || !email || !password) {
+
+    if (!firstName.trim() || !lastName.trim() || !cpf || !email.trim() || !password) {
       setError('Por favor, preencha todos os campos obrigatórios.');
       return;
     }
@@ -64,39 +53,38 @@ export function RegisterPanel() {
       return;
     }
 
+    if (password.length < 6) {
+      setError('A senha deve possuir no mínimo 6 caracteres.');
+      return;
+    }
+
     setError(null);
     setIsLoading(true);
 
     try {
-      const data = await api<RegisterResponse>('/auth/register', {
+      // POST /auth/register emite o Cookie seguro HttpOnly ("accessToken")
+      // e retorna apenas o AuthSessionDTO ({ name, lastName, role }) conforme LGPD.
+      const session = await api<AuthSession>('/auth/register', {
         method: 'POST',
+        skipAuthRedirect: true,
         body: JSON.stringify({
-          name: firstName,
-          last_name: lastName,
+          name: firstName.trim(),
+          lastName: lastName.trim(),
+          last_name: lastName.trim(),
           cpf: rawCpf,
-          email,
+          email: email.trim(),
           password,
         }),
       });
 
-      toast.success('Conta criada e autenticada com sucesso!');
+      await login(session);
+      toast.success(`Conta criada com sucesso! Bem-vindo(a), ${session.name}.`);
 
-      // Auto-login com o token retornado
-      login(data.token);
-
-      const base64Url = data.token.split('.')[1];
-      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-      const payload = JSON.parse(window.atob(base64));
-      const rawRole = payload.role || (payload.roles && payload.roles[0]);
-
-      setTimeout(() => {
-        if (rawRole === 'ROLE_ADMIN' || rawRole === 'ADMIN') {
-          navigate('/guiche');
-        } else {
-          navigate('/dashboard');
-        }
-      }, 1000);
-
+      if (session.role === 'ADMIN' || (session.role as string) === 'ROLE_ADMIN') {
+        navigate('/admin');
+      } else {
+        navigate('/dashboard');
+      }
     } catch (err: any) {
       setError(err.message || 'Falha ao registrar conta. Verifique os dados informados.');
       toast.error('Erro no cadastro. Tente novamente.');
@@ -109,7 +97,6 @@ export function RegisterPanel() {
     <Layout hideFooter={true}>
       <div className="min-h-[85vh] flex items-center justify-center py-10 animate-fade-in">
         <div className="w-full max-w-lg neo-card p-8 bg-white border-3 shadow-neo-lg relative">
-          
           {/* Cabeçalho */}
           <div className="text-center mb-6">
             <div className="inline-flex p-3 border-3 border-neo-dark bg-neo-yellow mb-3 shadow-neo-xs">
@@ -119,7 +106,7 @@ export function RegisterPanel() {
               Criar Conta Acadêmica
             </h1>
             <p className="text-xs text-slate-600 font-sans mt-1">
-              Cadastre-se para adquirir refeições, quitar taxas e emitir comprovantes
+              Cadastre-se para adquirir refeições, quitar taxas e gerenciar sua carteira digital
             </p>
           </div>
 
@@ -133,7 +120,6 @@ export function RegisterPanel() {
 
           {/* Formulário */}
           <form onSubmit={handleSubmit} className="space-y-4">
-            
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-[11px] font-heading font-bold uppercase tracking-wider text-slate-700 mb-1">
@@ -174,18 +160,9 @@ export function RegisterPanel() {
             </div>
 
             <div>
-              <div className="flex justify-between items-baseline mb-1">
-                <label className="block text-[11px] font-heading font-bold uppercase tracking-wider text-slate-700">
-                  CPF (apenas números) *
-                </label>
-                <button
-                  type="button"
-                  onClick={() => handleQuickCpf('12345678900')}
-                  className="text-[10px] font-mono text-neo-brand hover:underline cursor-pointer"
-                >
-                  Usar CPF de Teste
-                </button>
-              </div>
+              <label className="block text-[11px] font-heading font-bold uppercase tracking-wider text-slate-700 mb-1">
+                CPF do Titular (11 dígitos) *
+              </label>
               <div className="relative">
                 <input
                   type="text"
@@ -211,7 +188,7 @@ export function RegisterPanel() {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="exemplo@ifnmg.edu.br"
+                  placeholder="exemplo@aluno.ifnmg.edu.br"
                   className="neo-input neo-input-icon text-xs"
                   disabled={isLoading}
                 />
@@ -221,12 +198,13 @@ export function RegisterPanel() {
 
             <div>
               <label className="block text-[11px] font-heading font-bold uppercase tracking-wider text-slate-700 mb-1">
-                Defina sua Senha *
+                Defina sua Senha (mínimo 6 caracteres) *
               </label>
               <div className="relative">
                 <input
                   type={showPassword ? 'text' : 'password'}
                   required
+                  minLength={6}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Mínimo 6 caracteres"
@@ -248,12 +226,12 @@ export function RegisterPanel() {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full neo-btn-primary py-3 font-heading font-bold uppercase tracking-wider flex items-center justify-center gap-2 mt-6 text-xs shadow-neo-sm"
+              className="w-full neo-btn-primary py-3 font-heading font-bold uppercase tracking-wider flex items-center justify-center gap-2 mt-6 text-xs shadow-neo-sm cursor-pointer"
             >
               {isLoading ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>Registrando...</span>
+                  <span>Registrando Sessão HttpOnly...</span>
                 </>
               ) : (
                 <>
@@ -273,7 +251,6 @@ export function RegisterPanel() {
               </Link>
             </p>
           </div>
-
         </div>
       </div>
     </Layout>

@@ -8,26 +8,31 @@ pnpm-debug.log*
 lerna-debug.log*
 
 # Dependências
-node_modules
+node_modules/
 .pnp
 .pnp.js
 
-# Saídas de compilação / Build
-dist
-dist-ssr
+# Saídas de compilação / Build & Cache Vite/TS
+dist/
+dist-ssr/
+build/
+.vite/
+*.tsbuildinfo
 *.local
-build
+coverage/
 
 # Variáveis de ambiente sensíveis e locais
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env
+.env.*
+!.env.example
 
 # Editores & IDEs
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
+*.iws
+*.iml
+*.ipr
 *.suo
 *.ntvs*
 *.njsproj
@@ -37,3 +42,7 @@ build
 # Arquivos do Sistema Operacional
 .DS_Store
 Thumbs.db
+Desktop.ini
+
+# Ferramentas de IA & Graphify Knowledge Graph
+graphify-out/

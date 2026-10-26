@@ -1,7 +1,15 @@
 import React from 'react';
-import { ShieldCheck, Heart, ExternalLink, GraduationCap, Building } from 'lucide-react';
+import { ShieldCheck, GraduationCap, Building } from 'lucide-react';
+import { useSystemConfig } from '../../contexts/SystemConfigContext';
 
 export const Footer: React.FC = () => {
+  const { getConfig } = useSystemConfig();
+  const institutionName = getConfig('institution.name', 'IFNMG • Campus Salinas');
+  const institutionAddress = getConfig(
+    'institution.address',
+    'Fazenda Desterro, Rodovia Salinas / Taiobeiras, Km 02 • CEP: 39560-000 • Salinas - MG'
+  );
+
   return (
     <footer className="mt-16 bg-white border-t-3 border-neo-dark">
       {/* Barra superior de conformidade institucional */}
@@ -12,7 +20,8 @@ export const Footer: React.FC = () => {
               <ShieldCheck className="w-4 h-4" />
             </span>
             <span>
-              Conformidade com a <strong>LGPD (Lei nº 13.709/2018)</strong> e Diretrizes de Acessibilidade <strong>e-MAG</strong>.
+              Conformidade com a <strong>LGPD (Lei nº 13.709/2018)</strong> e Diretrizes de
+              Acessibilidade <strong>e-MAG</strong>.
             </span>
           </div>
           <div className="flex items-center gap-4">
@@ -29,23 +38,23 @@ export const Footer: React.FC = () => {
       {/* Grid principal de links e detalhes */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-          
-          {/* Coluna 1: Identificação Institucional */}
+          {/* Coluna 1: Identificação Institucional vinda do Backend (/config/public) */}
           <div className="md:col-span-2 space-y-3">
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 bg-neo-brand border-2 border-neo-dark flex items-center justify-center font-bold text-white text-xs">
                 IF
               </div>
               <span className="font-heading font-bold text-base uppercase tracking-tight text-neo-dark">
-                IFNMG • Campus Salinas
+                {institutionName}
               </span>
             </div>
             <p className="text-xs text-slate-600 font-sans leading-relaxed max-w-md">
-              Sistema moderno de arrecadação pública digital e controle logístico de tíquetes de alimentação e taxas acadêmicas. Conectado de forma reativa à infraestrutura da Secretaria do Tesouro Nacional (STN).
+              Sistema moderno de arrecadação pública digital e controle logístico de tíquetes de
+              alimentação e taxas acadêmicas. Conectado de forma reativa à infraestrutura da
+              Secretaria do Tesouro Nacional (STN).
             </p>
             <div className="pt-2 text-[11px] font-mono text-slate-500">
-              <p>📍 Fazenda Desterro, Rodovia Salinas / Taiobeiras, Km 02</p>
-              <p>CEP: 39560-000 • Salinas - MG</p>
+              <p>📍 {institutionAddress}</p>
             </div>
           </div>
 
@@ -55,10 +64,18 @@ export const Footer: React.FC = () => {
               <GraduationCap className="w-4 h-4 text-neo-brand" /> Monografia TCC II
             </h4>
             <ul className="text-xs font-sans text-slate-600 space-y-1.5">
-              <li><strong>Curso:</strong> Bacharelado em Sistemas de Informação</li>
-              <li><strong>Autor:</strong> Caio da Silva Viana</li>
-              <li><strong>Instituição:</strong> IFNMG Salinas</li>
-              <li><strong>Ano:</strong> 2026</li>
+              <li>
+                <strong>Curso:</strong> Bacharelado em Sistemas de Informação
+              </li>
+              <li>
+                <strong>Autor:</strong> Caio da Silva Viana
+              </li>
+              <li>
+                <strong>Instituição:</strong> {institutionName}
+              </li>
+              <li>
+                <strong>Ano:</strong> {new Date().getFullYear()}
+              </li>
             </ul>
           </div>
 
@@ -74,12 +91,14 @@ export const Footer: React.FC = () => {
               <p>• PostgreSQL & Flyway</p>
             </div>
           </div>
-
         </div>
 
         {/* Rodapé final com copyright */}
         <div className="mt-8 pt-6 border-t-2 border-dashed border-slate-300 flex flex-col sm:flex-row justify-between items-center gap-4 text-[11px] font-mono text-slate-500">
-          <p>© {new Date().getFullYear()} IFNMG Express Moderno. Todos os direitos reservados para fins acadêmicos.</p>
+          <p>
+            © {new Date().getFullYear()} {institutionName}. Todos os direitos reservados para fins
+            acadêmicos.
+          </p>
           <div className="flex items-center gap-1">
             <span>Desenvolvido com excelência técnica para o IFNMG</span>
           </div>
