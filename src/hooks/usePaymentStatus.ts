@@ -34,10 +34,8 @@ export function usePaymentStatus(paymentId: string | undefined) {
     setIsLoading(true);
     setError(null);
 
-    const rawBaseUrl = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_URL || '');
-    const baseUrl = rawBaseUrl.replace(/\/+$/, '');
-    // Suporta tanto o proxy do vite quanto chamadas diretas
-    const sseUrl = `${baseUrl}/payments/${paymentId}/sse`;
+    // Rota relativa na mesma origem (atendida pelo proxy do Vite em dev e Nginx em container na OCI)
+    const sseUrl = `/payments/${paymentId}/sse`;
 
     // 2. Instancia o EventSource nativo apontando para a rota de SSE do backend Java
     const eventSource = new EventSource(sseUrl);

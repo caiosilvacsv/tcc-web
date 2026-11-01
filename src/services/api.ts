@@ -1,8 +1,8 @@
-// Em modo de desenvolvimento (DEV), usamos string vazia '' por padrão para que as requisições
-// passem pelo proxy do Vite (vite.config.ts), preservando o mesmo domínio (Same-Origin)
-// e garantindo o tráfego transparente do Cookie seguro HttpOnly ("accessToken").
-const rawBaseUrl = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_URL || '');
-const BASE_URL = rawBaseUrl.replace(/\/+$/, '');
+// Todas as requisições trafegam na mesma origem (Same-Origin):
+// - Em desenvolvimento (DEV): via proxy reverso do Vite (vite.config.ts -> http://localhost:8080)
+// - Em produção (OCI / Docker): via proxy reverso do Nginx (nginx.conf -> http://server:8080)
+// Isso garante o tráfego transparente do Cookie seguro HttpOnly ("accessToken", SameSite=Lax).
+const BASE_URL = '';
 
 interface RequestOptions extends RequestInit {
   params?: Record<string, string>;

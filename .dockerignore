@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-ssr
+coverage
+graphify-out
+.git
+.vscode
+.idea
+.env
+.env.*
+*.log
+*.tsbuildinfo
