@@ -21,8 +21,7 @@ import {
   Building,
   AlertTriangle,
   X,
-  FileSearch,
-  Ticket,
+  Clock,
 } from 'lucide-react';
 import { isValidCpf, formatCpf, cleanCpf } from '../../utils/cpf';
 import { Layout } from '../../components/layout/Layout';
@@ -53,31 +52,7 @@ interface OrderResponse {
   id: string;
 }
 
-interface GuestTicketDTO {
-  itemId: string;
-  orderId: string;
-  productTitle: string;
-  quantity: number;
-  buyerName: string;
-  buyerCpf: string;
-  paidAt: string;
-}
 
-interface GuestOrderDTO {
-  id: string;
-  totalAmount: number;
-  status: string;
-  statusDescription?: string;
-  createdAt: string;
-  items: {
-    id: string;
-    productTitle: string;
-    quantity: number;
-    totalAmount: number;
-    status: string;
-    statusDescription?: string;
-  }[];
-}
 
 export function ProductStore() {
   const { items: cartItems, addItem, removeItem, updateQuantity, clearCart, getSubtotal } =
@@ -109,24 +84,16 @@ export function ProductStore() {
 
   // Estados de Checkout e Carrinho
   const [isCheckoutMode, setIsCheckoutMode] = useState(false);
+  const [paymentTiming, setPaymentTiming] = useState<'IMMEDIATE' | 'LATER'>('IMMEDIATE');
   const [contributorName, setContributorName] = useState('');
   const [contributorCpf, setContributorCpf] = useState('');
   const [cpfError, setCpfError] = useState<string | null>(null);
-  const [useAccountDetails, setUseAccountDetails] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Estados do Modal Multi-Guia do PagTesouro
   const [checkoutGuides, setCheckoutGuides] = useState<CheckoutGuideItem[]>([]);
   const [currentOrderId, setCurrentOrderId] = useState<string | null>(null);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-
-  // Estados da Consulta Pública de Visitante por CPF (GET /orders/guest & GET /orders/tickets)
-  const [isGuestLookupOpen, setIsGuestLookupOpen] = useState(false);
-  const [guestLookupCpf, setGuestLookupCpf] = useState('');
-  const [isSearchingGuest, setIsSearchingGuest] = useState(false);
-  const [guestTickets, setGuestTickets] = useState<GuestTicketDTO[]>([]);
-  const [guestOrders, setGuestOrders] = useState<GuestOrderDTO[]>([]);
-  const [hasSearchedGuest, setHasSearchedGuest] = useState(false);
 
   // Busca categorias e produtos ativos direto do Backend (sem dados estáticos chumbados)
   const fetchStoreData = async () => {
@@ -155,21 +122,7 @@ export function ProductStore() {
     fetchStoreData();
   }, []);
 
-  // Preenche automaticamente os dados reais do titular logado vindos de GET /auth/me (sem CPF falso!)
-  useEffect(() => {
-    if (isAuthenticated && user && useAccountDetails) {
-      const fullName = `${user.name || ''}${user.lastName ? ' ' + user.lastName : ''}`
-        .trim()
-        .slice(0, 45);
-      setContributorName(fullName);
-      setContributorCpf(user.cpf ? formatCpf(user.cpf) : '');
-      setCpfError(null);
-    } else if (isAuthenticated && !useAccountDetails) {
-      setContributorName('');
-      setContributorCpf('');
-      setCpfError(null);
-    }
-  }, [isAuthenticated, user, useAccountDetails]);
+
 
   const handleCpfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawValue = e.target.value;
@@ -208,28 +161,11 @@ export function ProductStore() {
     e.preventDefault();
     if (cartItems.length === 0) return;
 
-    const cpfLimpo = cleanCpf(contributorCpf);
-    if (!isAuthenticated || !useAccountDetails) {
-      if (!contributorName.trim()) {
-        toast.error('Informe o nome completo do contribuinte (máx. 45 caracteres).');
-        return;
-      }
-      if (cpfLimpo.length !== 11 || !isValidCpf(cpfLimpo)) {
-        setCpfError('O CPF informado é inválido.');
-        toast.error('Informe um CPF válido para emissão da guia no PagTesouro.');
-        return;
-      }
-    }
-
     setIsProcessing(true);
     try {
       if (isAuthenticated) {
-        // 1. Cria o Pedido no Backend (POST /orders)
+        // Submissão unificada do carrinho: única requisição POST /orders com itens e quantidades (sem CPF)
         const orderPayload = {
-          items: cartItems.map((item) => ({
-            productId: item.id,
-            quantity: item.quantity,
-          })),
           itemsList: cartItems.map((item) => ({
             productId: item.id,
             quantity: item.quantity,
@@ -241,33 +177,49 @@ export function ProductStore() {
           body: JSON.stringify(orderPayload),
         });
 
-        // 2. Gera as guias agrupadas por código SISGRU (POST /payments/checkout/{orderId})
-        const checkoutResponse = await api<CheckoutGuideItem | CheckoutGuideItem[]>(
-          `/payments/checkout/${orderData.id}`,
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              contributorCpfCnpj: useAccountDetails ? undefined : cpfLimpo,
-              contributorName: useAccountDetails ? undefined : contributorName.trim().slice(0, 45),
-              isMobile: false,
-            }),
-          }
-        );
-
-        const guidesList = Array.isArray(checkoutResponse)
-          ? checkoutResponse
-          : [checkoutResponse];
-
-        setCurrentOrderId(orderData.id);
-        setCheckoutGuides(guidesList);
-        setIsPaymentModalOpen(true);
-        setIsCheckoutMode(false);
         clearCart();
-        toast.success(
-          `${guidesList.length} ${guidesList.length === 1 ? 'guia gerada' : 'guias SISGRU geradas'} com sucesso!`
-        );
+        setIsCheckoutMode(false);
+
+        if (paymentTiming === 'LATER') {
+          toast.success(
+            `Pedido #${orderData.id.slice(0, 8)} realizado com sucesso! Você pode realizar o pagamento quando desejar pelo painel "Minha Carteira".`
+          );
+        } else {
+          // Opção de geração imediata da guia (zero CPF no payload)
+          const checkoutResponse = await api<CheckoutGuideItem | CheckoutGuideItem[]>(
+            `/payments/checkout/${orderData.id}`,
+            {
+              method: 'POST',
+              body: JSON.stringify({ isMobile: false }),
+            }
+          );
+
+          const guidesList = Array.isArray(checkoutResponse)
+            ? checkoutResponse
+            : [checkoutResponse];
+
+          setCurrentOrderId(orderData.id);
+          setCheckoutGuides(guidesList);
+          setIsPaymentModalOpen(true);
+          toast.success(
+            `${guidesList.length} ${guidesList.length === 1 ? 'guia gerada' : 'guias SISGRU geradas'} com sucesso!`
+          );
+        }
       } else {
-        // Visitante Anônimo: Checkout Direto (POST /payments/checkout/direct)
+        // Visitante Anônimo: valida dados e submete checkout direto
+        const cpfLimpo = cleanCpf(contributorCpf);
+        if (!contributorName.trim()) {
+          toast.error('Informe o nome completo do contribuinte (máx. 45 caracteres).');
+          setIsProcessing(false);
+          return;
+        }
+        if (cpfLimpo.length !== 11 || !isValidCpf(cpfLimpo)) {
+          setCpfError('O CPF informado é inválido.');
+          toast.error('Informe um CPF válido para emissão da guia no PagTesouro.');
+          setIsProcessing(false);
+          return;
+        }
+
         const firstItem = cartItems[0];
         const directGuide = await api<CheckoutGuideItem>('/payments/checkout/direct', {
           method: 'POST',
@@ -289,38 +241,9 @@ export function ProductStore() {
         toast.success('Guia avulsa do PagTesouro gerada com sucesso!');
       }
     } catch (err: any) {
-      toast.error(err.message || 'Falha ao iniciar checkout com o PagTesouro.');
+      toast.error(err.message || 'Falha ao processar checkout.');
     } finally {
       setIsProcessing(false);
-    }
-  };
-
-  // Consulta Pública de Visitante por CPF
-  const handleGuestLookup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const rawCpf = cleanCpf(guestLookupCpf);
-    if (rawCpf.length !== 11 || !isValidCpf(rawCpf)) {
-      toast.error('Informe um CPF válido com 11 dígitos.');
-      return;
-    }
-
-    setIsSearchingGuest(true);
-    setHasSearchedGuest(true);
-    try {
-      const [ticketsRes, ordersRes] = await Promise.all([
-        api<GuestTicketDTO[]>(`/orders/tickets?cpf=${rawCpf}`, { skipAuthRedirect: true }).catch(
-          () => []
-        ),
-        api<GuestOrderDTO[]>(`/orders/guest?cpf=${rawCpf}`, { skipAuthRedirect: true }).catch(
-          () => []
-        ),
-      ]);
-      setGuestTickets(Array.isArray(ticketsRes) ? ticketsRes : []);
-      setGuestOrders(Array.isArray(ordersRes) ? ordersRes : []);
-    } catch (err: any) {
-      toast.error(err.message || 'Erro ao consultar CPF.');
-    } finally {
-      setIsSearchingGuest(false);
     }
   };
 
@@ -388,17 +311,7 @@ export function ProductStore() {
               </div>
             </div>
 
-            {/* Botão de Consulta Pública por CPF (Autoatendimento de Visitante) */}
-            <div className="flex-shrink-0">
-              <button
-                type="button"
-                onClick={() => setIsGuestLookupOpen(true)}
-                className="neo-btn bg-neo-yellow hover:bg-amber-300 text-neo-dark border-3 border-neo-dark py-3 px-5 shadow-neo-sm font-heading font-bold text-xs uppercase flex items-center gap-2 cursor-pointer"
-              >
-                <FileSearch className="w-5 h-5" />
-                <span>Consultar Tíquetes / Compras por CPF</span>
-              </button>
-            </div>
+
           </div>
         </div>
 
@@ -737,51 +650,101 @@ export function ProductStore() {
                   </div>
 
                   {isAuthenticated ? (
-                    <div className="p-3 bg-emerald-50 border-2 border-neo-dark space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-heading font-bold uppercase text-emerald-950">
-                          Titular Autenticado
+                    <div className="space-y-4">
+                      <div className="p-3 bg-emerald-50 border-2 border-neo-dark space-y-1">
+                        <span className="text-[11px] font-heading font-bold uppercase text-emerald-950 block">
+                          Titular da Compra
                         </span>
-                        <label className="flex items-center gap-1.5 text-[11px] font-mono cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={useAccountDetails}
-                            onChange={(e) => setUseAccountDetails(e.target.checked)}
-                            className="accent-neo-brand"
-                          />
-                          <span>Usar meu CPF/Nome</span>
-                        </label>
+                        <p className="text-xs font-sans text-slate-800">
+                          Identificação vinculada com segurança à conta de{' '}
+                          <strong>
+                            {user?.name} {user?.lastName || ''}
+                          </strong>
+                          .
+                        </p>
+                        <span className="text-[10px] font-mono text-emerald-800 block">
+                          🛡️ Emissão fiscal automatizada via credencial institucional (sem exposição de CPF).
+                        </span>
                       </div>
-                      {useAccountDetails && (
-                        <div className="text-xs font-mono text-slate-700 space-y-0.5">
-                          <p>
-                            <strong>Nome:</strong> {contributorName || user?.name}
-                          </p>
-                          <p>
-                            <strong>CPF:</strong>{' '}
-                            {user?.cpf ? formatCpf(user.cpf) : 'Vinculado à sessão HttpOnly'}
-                          </p>
+
+                      <div className="space-y-2">
+                        <label className="block text-xs font-heading font-bold uppercase text-neo-dark">
+                          Como deseja prosseguir com o pagamento?
+                        </label>
+                        
+                        <div
+                          onClick={() => setPaymentTiming('IMMEDIATE')}
+                          className={`p-3 border-2 cursor-pointer transition-all ${
+                            paymentTiming === 'IMMEDIATE'
+                              ? 'bg-amber-50 border-neo-dark shadow-neo-xs'
+                              : 'bg-white border-slate-300 hover:border-slate-400'
+                          }`}
+                        >
+                          <div className="flex items-start gap-2.5">
+                            <input
+                              type="radio"
+                              name="paymentTiming"
+                              value="IMMEDIATE"
+                              checked={paymentTiming === 'IMMEDIATE'}
+                              onChange={() => setPaymentTiming('IMMEDIATE')}
+                              className="mt-0.5 accent-neo-dark"
+                            />
+                            <div>
+                              <span className="font-heading font-bold text-xs uppercase text-neo-dark block">
+                                ⚡ Gerar Guia PagTesouro Agora
+                              </span>
+                              <p className="text-[11px] text-slate-600 mt-0.5 font-sans leading-snug">
+                                Abre instantaneamente o ambiente oficial do PagTesouro (PIX, Cartão ou Boleto GRU) para quitação imediata.
+                              </p>
+                            </div>
+                          </div>
                         </div>
-                      )}
+
+                        <div
+                          onClick={() => setPaymentTiming('LATER')}
+                          className={`p-3 border-2 cursor-pointer transition-all ${
+                            paymentTiming === 'LATER'
+                              ? 'bg-sky-50 border-neo-dark shadow-neo-xs'
+                              : 'bg-white border-slate-300 hover:border-slate-400'
+                          }`}
+                        >
+                          <div className="flex items-start gap-2.5">
+                            <input
+                              type="radio"
+                              name="paymentTiming"
+                              value="LATER"
+                              checked={paymentTiming === 'LATER'}
+                              onChange={() => setPaymentTiming('LATER')}
+                              className="mt-0.5 accent-neo-dark"
+                            />
+                            <div>
+                              <span className="font-heading font-bold text-xs uppercase text-neo-dark block">
+                                🕒 Salvar Pedido e Pagar Depois
+                              </span>
+                              <p className="text-[11px] text-slate-600 mt-0.5 font-sans leading-snug">
+                                Registra o pedido na sua conta. Você poderá emitir a guia a qualquer momento acessando "Minha Carteira".
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   ) : (
-                    <div className="p-3 bg-slate-50 border-2 border-neo-dark text-xs space-y-2">
-                      <p className="font-sans text-slate-600">
-                        Você está comprando como <strong>Visitante</strong>. Informe o CPF onde o
-                        tíquete ficará disponível para retirada no refeitório:
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => navigate('/login')}
-                        className="text-[11px] font-mono font-bold text-neo-brand hover:underline flex items-center gap-1 cursor-pointer"
-                      >
-                        <LogIn className="w-3.5 h-3.5" /> Prefere entrar na sua conta acadêmica?
-                      </button>
-                    </div>
-                  )}
-
-                  {(!isAuthenticated || !useAccountDetails) && (
                     <>
+                      <div className="p-3 bg-slate-50 border-2 border-neo-dark text-xs space-y-2">
+                        <p className="font-sans text-slate-600">
+                          Você está comprando como <strong>Visitante</strong>. Informe o CPF onde o
+                          tíquete ficará disponível para retirada no refeitório:
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => navigate('/login')}
+                          className="text-[11px] font-mono font-bold text-neo-brand hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <LogIn className="w-3.5 h-3.5" /> Prefere entrar na sua conta acadêmica?
+                        </button>
+                      </div>
+
                       <div>
                         <div className="flex justify-between text-[11px] font-heading font-bold uppercase text-slate-700 mb-1">
                           <span>Nome do Contribuinte *</span>
@@ -836,8 +799,17 @@ export function ProductStore() {
                       disabled={isProcessing}
                       className="flex-1 neo-btn-primary py-3 text-xs font-heading font-bold uppercase flex items-center justify-center gap-1.5 cursor-pointer"
                     >
-                      <QrCode className="w-4 h-4" />
-                      <span>{isProcessing ? 'Emitindo Guia STN...' : 'Gerar Guia PagTesouro'}</span>
+                      {isAuthenticated && paymentTiming === 'LATER' ? (
+                        <>
+                          <Clock className="w-4 h-4" />
+                          <span>{isProcessing ? 'Registrando Pedido...' : 'Salvar Pedido e Pagar Depois'}</span>
+                        </>
+                      ) : (
+                        <>
+                          <QrCode className="w-4 h-4" />
+                          <span>{isProcessing ? 'Emitindo Guia STN...' : 'Gerar Guia PagTesouro'}</span>
+                        </>
+                      )}
                     </button>
                   </div>
                 </form>
@@ -853,138 +825,11 @@ export function ProductStore() {
         onClose={() => setIsPaymentModalOpen(false)}
         payments={checkoutGuides}
         orderId={currentOrderId}
-        contributorName={contributorName || user?.name}
+        contributorName={contributorName || (user ? `${user.name} ${user.lastName || ''}`.trim() : undefined)}
         onSuccess={() => {
-          toast.success('Pagamento confirmado! Consulte seus tíquetes na Carteira ou por CPF.');
+          toast.success('Pagamento confirmado! Consulte seus tíquetes na Minha Carteira.');
         }}
       />
-
-      {/* MODAL DE CONSULTA PÚBLICA DE VISITANTE POR CPF (GET /orders/tickets & GET /orders/guest) */}
-      {isGuestLookupOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
-          <div className="w-full max-w-2xl neo-card bg-white border-3 border-neo-dark shadow-neo-lg max-h-[90vh] flex flex-col overflow-hidden">
-            <div className="p-4 bg-neo-yellow border-b-3 border-neo-dark flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Ticket className="w-5 h-5 text-neo-dark" />
-                <h2 className="font-heading font-bold text-sm uppercase text-neo-dark">
-                  Consulta Pública de Tíquetes e Pedidos por CPF
-                </h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsGuestLookupOpen(false)}
-                className="p-1 border-2 border-neo-dark bg-white hover:bg-slate-100 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="p-6 overflow-y-auto space-y-5 flex-1">
-              <form onSubmit={handleGuestLookup} className="flex flex-col sm:flex-row gap-2">
-                <div className="relative flex-1">
-                  <input
-                    type="text"
-                    required
-                    maxLength={14}
-                    value={guestLookupCpf}
-                    onChange={(e) => setGuestLookupCpf(formatCpf(e.target.value))}
-                    placeholder="Digite o CPF do comprador (000.000.000-00)"
-                    className="neo-input font-mono text-xs"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={isSearchingGuest}
-                  className="neo-btn-primary py-2.5 px-5 text-xs font-heading font-bold uppercase cursor-pointer"
-                >
-                  {isSearchingGuest ? 'Consultando...' : 'Consultar CPF'}
-                </button>
-              </form>
-
-              {hasSearchedGuest && !isSearchingGuest && (
-                <div className="space-y-5">
-                  {/* Tíquetes Prontos para Retirada */}
-                  <div className="space-y-2">
-                    <h3 className="font-heading font-bold text-xs uppercase text-neo-dark border-b-2 border-neo-dark pb-1">
-                      🎫 Tíquetes Quitados Disponíveis para Retirada ({guestTickets.length})
-                    </h3>
-                    {guestTickets.length === 0 ? (
-                      <p className="text-xs font-mono text-slate-500 p-3 bg-slate-50 border border-slate-300">
-                        Nenhum tíquete pago aguardando retirada para este CPF.
-                      </p>
-                    ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {guestTickets.map((t) => (
-                          <div
-                            key={t.itemId}
-                            className="p-3 bg-emerald-50 border-2 border-neo-dark shadow-neo-xs space-y-1"
-                          >
-                            <div className="flex justify-between items-center">
-                              <span className="px-1.5 py-0.5 bg-emerald-400 border border-neo-dark font-mono font-bold text-[10px]">
-                                PRONTO PARA USO ({t.quantity}x)
-                              </span>
-                              <span className="font-mono text-[10px] text-slate-500">
-                                #{t.itemId.slice(0, 8)}
-                              </span>
-                            </div>
-                            <p className="font-heading font-bold text-xs text-neo-dark">
-                              {t.productTitle}
-                            </p>
-                            <p className="font-mono text-[10px] text-slate-600">
-                              Titular: {t.buyerName}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Histórico de Pedidos de Visitante */}
-                  <div className="space-y-2">
-                    <h3 className="font-heading font-bold text-xs uppercase text-neo-dark border-b-2 border-neo-dark pb-1">
-                      🧾 Histórico de Compras como Visitante ({guestOrders.length})
-                    </h3>
-                    {guestOrders.length === 0 ? (
-                      <p className="text-xs font-mono text-slate-500 p-3 bg-slate-50 border border-slate-300">
-                        Nenhum pedido de visitante registrado para este CPF.
-                      </p>
-                    ) : (
-                      <div className="space-y-2">
-                        {guestOrders.map((o) => (
-                          <div
-                            key={o.id}
-                            className="p-3 bg-white border-2 border-neo-dark flex justify-between items-center text-xs"
-                          >
-                            <div>
-                              <span className="font-mono font-bold text-neo-dark">
-                                Pedido #{o.id.slice(0, 8)}
-                              </span>
-                              <p className="text-[11px] text-slate-600">
-                                {o.items?.map((i) => `${i.quantity}x ${i.productTitle}`).join(', ')}
-                              </p>
-                            </div>
-                            <div className="text-right">
-                              <span className="font-mono font-bold block">
-                                {new Intl.NumberFormat('pt-BR', {
-                                  style: 'currency',
-                                  currency: 'BRL',
-                                }).format(o.totalAmount)}
-                              </span>
-                              <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 bg-slate-100 border border-neo-dark">
-                                {o.statusDescription || o.status}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </Layout>
   );
 }

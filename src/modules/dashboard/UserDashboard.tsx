@@ -30,7 +30,6 @@ import {
   PagTesouroPaymentModal,
   CheckoutGuideItem,
 } from '../../components/payment/PagTesouroPaymentModal';
-import { formatCpf } from '../../utils/cpf';
 
 interface TicketReadyDTO {
   itemId: string;
@@ -145,10 +144,6 @@ export function UserDashboard() {
     if (!isAuthenticated) return;
     setIsLoading(true);
     try {
-      // Garante que temos o CPF autenticado vindo de GET /auth/me
-      const currentProfile = user?.cpf ? user : await refreshProfile();
-      const userCpf = currentProfile?.cpf;
-
       const [ordersData, invoicesPage, ticketsData] = await Promise.all([
         api<OrderDTO[]>('/orders').catch(() => []),
         api<PageResponse<PaymentInvoiceDTO>>('/payments').catch(() => ({
@@ -158,9 +153,7 @@ export function UserDashboard() {
           totalElements: 0,
           totalPages: 0,
         })),
-        userCpf
-          ? api<TicketReadyDTO[]>(`/orders/tickets?cpf=${userCpf}`).catch(() => [])
-          : Promise.resolve([]),
+        api<TicketReadyDTO[]>('/orders/tickets').catch(() => []),
       ]);
 
       setOrders(Array.isArray(ordersData) ? ordersData : []);
@@ -171,7 +164,7 @@ export function UserDashboard() {
     } finally {
       setIsLoading(false);
     }
-  }, [isAuthenticated, user, refreshProfile, toast]);
+  }, [isAuthenticated, toast]);
 
   useEffect(() => {
     fetchDashboardData();
@@ -326,8 +319,7 @@ export function UserDashboard() {
                 </span>
               </div>
               <p className="text-xs font-mono text-slate-600 mt-1">
-                CPF: {user?.cpf ? formatCpf(user.cpf) : 'Protegido'} • E-mail:{' '}
-                {user?.email || 'Autenticado via Cookie HttpOnly'}
+                E-mail: {user?.email || 'Autenticado via Cookie HttpOnly'}
               </p>
             </div>
           </div>
@@ -462,7 +454,7 @@ export function UserDashboard() {
         </div>
 
         {/* =====================================================================
-            ABA 1: CARTEIRA DE TÍQUETES DISPONÍVEIS (GET /orders/tickets?cpf=)
+            ABA 1: CARTEIRA DE TÍQUETES DISPONÍVEIS (GET /orders/tickets)
            ===================================================================== */}
         {activeTab === 'TICKETS' && (
           <div className="neo-card p-6 bg-white border-3">
@@ -825,7 +817,7 @@ export function UserDashboard() {
                 {selectedTicketForQr.productTitle}
               </h4>
               <p className="text-xs font-mono text-slate-600">
-                Titular: {selectedTicketForQr.buyerName} ({formatCpf(selectedTicketForQr.buyerCpf)})
+                Titular: {selectedTicketForQr.buyerName}
               </p>
             </div>
 
@@ -842,7 +834,7 @@ export function UserDashboard() {
             </div>
 
             <p className="text-[11px] text-slate-500 font-sans">
-              Apresente seu CPF ou este código identificador ao operador no Guichê do Restaurante
+              Apresente este código identificador ao operador no Guichê do Restaurante
               Universitário para retirar sua refeição.
             </p>
           </div>
@@ -1003,14 +995,12 @@ export function UserDashboard() {
 
                   <div>
                     <label className="block text-[11px] font-heading font-bold uppercase text-slate-500 mb-1">
-                      CPF Fiscal (Imutável p/ Auditoria STN)
+                      Identificação Fiscal
                     </label>
-                    <input
-                      type="text"
-                      disabled
-                      value={user?.cpf ? formatCpf(user.cpf) : ''}
-                      className="neo-input font-mono text-xs bg-slate-100 text-slate-500 cursor-not-allowed"
-                    />
+                    <div className="p-2.5 bg-slate-100 border-2 border-slate-300 font-mono text-xs text-slate-700 flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                      <span>Identificação Fiscal Vinculada à Sessão Segura</span>
+                    </div>
                   </div>
 
                   <div className="flex justify-end gap-2 pt-2">

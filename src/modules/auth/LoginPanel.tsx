@@ -222,7 +222,7 @@ export function LoginPanel() {
               </Link>
             </p>
             <p className="text-slate-500 text-[11px]">
-              Deseja comprar ou consultar tíquetes como visitante?{' '}
+              Deseja adquirir serviços na vitrine pública?{' '}
               <Link to="/store" className="font-bold text-neo-accent hover:underline">
                 Acessar Vitrine Pública
               </Link>

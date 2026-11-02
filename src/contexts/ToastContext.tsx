@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
 import { CheckCircle2, AlertTriangle, AlertCircle, Info, X } from 'lucide-react';
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
@@ -44,7 +44,12 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const id = Math.random().toString(36).substring(2, 9);
     const newToast: Toast = { id, type, title, message, duration };
     
-    setToasts((prev) => [...prev, newToast]);
+    setToasts((prev) => {
+      if (prev.some((t) => t.type === type && t.message === message)) {
+        return prev;
+      }
+      return [...prev.slice(-3), newToast];
+    });
 
     if (duration > 0) {
       setTimeout(() => {
@@ -73,6 +78,11 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setConfirmDialog(options);
   }, []);
 
+  const contextValue = useMemo(
+    () => ({ showToast, success, error, warning, info, confirm }),
+    [showToast, success, error, warning, info, confirm]
+  );
+
   const handleConfirmClose = (accepted: boolean) => {
     if (!confirmDialog) return;
     if (accepted) {
@@ -84,7 +94,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   return (
-    <ToastContext.Provider value={{ showToast, success, error, warning, info, confirm }}>
+    <ToastContext.Provider value={contextValue}>
       {children}
 
       {/* Container de Toasts Flutuantes */}

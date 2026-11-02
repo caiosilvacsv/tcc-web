@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ==============================================================================
 # Dockerfile Multiestágio para o Frontend (tcc-web)
 # Plataforma: Node.js 20 (Build) & Nginx Alpine (Runtime Estático + Proxy)
@@ -8,9 +9,10 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copia manifesto de dependências para otimizar cache de camadas
+# Copia manifesto de dependências e instala usando Cache Mount sem auditoria lenta
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --no-fund
 
 # Copia o código-fonte e compila para a pasta /app/dist
 COPY . .

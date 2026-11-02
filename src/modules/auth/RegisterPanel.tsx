@@ -70,7 +70,6 @@ export function RegisterPanel() {
         body: JSON.stringify({
           name: firstName.trim(),
           lastName: lastName.trim(),
-          last_name: lastName.trim(),
           cpf: rawCpf,
           email: email.trim(),
           password,
